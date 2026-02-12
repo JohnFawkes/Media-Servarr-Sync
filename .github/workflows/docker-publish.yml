@@ -8,6 +8,10 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # Explicitly grant permissions for the GITHUB_TOKEN
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -30,7 +34,7 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ vars.repo }}:latest
-            ghcr.io/${{ vars.repo }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
