@@ -27,9 +27,11 @@ USER appuser
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-EXPOSE 5000
+ARG PORT=5000
+ENV PORT=${PORT}
+EXPOSE ${PORT}
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD curl -sf http://localhost:5000/health || exit 1
+  CMD curl -sf http://localhost:${PORT:-5000}/health || exit 1
 
 ENTRYPOINT ["python", "plex_servarr_webhook.py"]

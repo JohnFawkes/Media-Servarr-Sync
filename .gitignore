@@ -11,3 +11,4 @@ ENV/
 .vscode/
 .idea/
 *.log
+compose-dev.yaml

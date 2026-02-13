@@ -28,26 +28,54 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import plexapi
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from dotenv import load_dotenv
 from plexapi.server import PlexServer
 from plexapi.base import MediaContainer
 
 # ---------------------------------------------------------------------------
-# Logging
+# Timezone — resolved before logging so timestamps are correct from line 1
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-log = logging.getLogger(__name__)
-
-# Load configuration from .env file
 load_dotenv()
+
+def _resolve_tz() -> timezone:
+    tz_name = os.getenv("TZ", "").strip()
+    if tz_name:
+        try:
+            return ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            print(f"WARNING: Unknown timezone '{tz_name}', falling back to UTC", flush=True)
+    return timezone.utc
+
+LOCAL_TZ = _resolve_tz()
+
+
+def now_local() -> datetime:
+    """Return the current time in the configured timezone."""
+    return datetime.now(LOCAL_TZ)
+
+
+# ---------------------------------------------------------------------------
+# Logging — timezone-aware timestamps
+# ---------------------------------------------------------------------------
+
+class _TZFormatter(logging.Formatter):
+    """Logging formatter that stamps records in LOCAL_TZ."""
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, tz=LOCAL_TZ)
+        return dt.strftime(datefmt or "%Y-%m-%dT%H:%M:%S%z")
+
+
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(_TZFormatter(
+    fmt="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S%z",
+))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
+log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -104,12 +132,14 @@ def apply_path_mapping(path: str, mapping: dict, label: str, is_dir: bool = True
 
 PLEX_URL        = os.getenv("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
 PLEX_TOKEN      = os.getenv("PLEX_TOKEN", "")
-PLEX_TIMEOUT    = int(os.getenv("PLEX_TIMEOUT", 60))
-PORT            = int(os.getenv("PORT", 5000))
+PLEX_TIMEOUT    = parse_duration(os.getenv("PLEX_TIMEOUT", "60")) or 60
+PORT            = int(os.getenv("PORT", "5000"))
 WEBHOOK_DELAY   = parse_duration(os.getenv("WEBHOOK_DELAY", "30"))
 MINIMUM_AGE     = parse_duration(os.getenv("MINIMUM_AGE", "0"))
 MANUAL_USER     = os.getenv("MANUAL_USER", "admin")
 MANUAL_PASS     = os.getenv("MANUAL_PASS", "password")
+# Used to sign session cookies — set a long random string in your .env
+SECRET_KEY      = os.getenv("SECRET_KEY", os.urandom(24).hex())
 
 # Rclone — set USE_RCLONE=false to skip all rclone calls entirely
 USE_RCLONE        = os.getenv("USE_RCLONE", "false").strip().lower() in ("1", "true", "yes")
@@ -120,14 +150,18 @@ RCLONE_MOUNT_ROOT = os.getenv("RCLONE_MOUNT_ROOT", "").rstrip('/')
 
 plexapi.TIMEOUT = PLEX_TIMEOUT
 
-# Set a stable client identifier so Plex doesn't register a new device on every container start
-PLEX_IDENTIFIER           = os.getenv("PLEX_IDENTIFIER", "plex-servarr-sync")
+# PlexAPI reads PLEXAPI_HEADER_IDENTIFIER from the environment automatically on import.
+# We set it explicitly here as well so it's always applied regardless of import order.
+PLEX_IDENTIFIER           = os.getenv("PLEXAPI_HEADER_IDENTIFIER", "plex-servarr-sync")
 plexapi.X_PLEX_IDENTIFIER = PLEX_IDENTIFIER
 plexapi.X_PLEX_PRODUCT    = PLEX_IDENTIFIER
 
 PATH_REPLACEMENTS        = parse_json_env("PATH_REPLACEMENTS")
 RCLONE_PATH_REPLACEMENTS = parse_json_env("RCLONE_PATH_REPLACEMENTS")
 SECTION_MAPPING          = parse_json_env("SECTION_MAPPING")
+
+# Apply secret key now that config is loaded
+app.secret_key = SECRET_KEY
 
 
 # ---------------------------------------------------------------------------
@@ -208,10 +242,8 @@ def invalidate_plex():
 def requires_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth = request.authorization
-        if not auth or auth.username != MANUAL_USER or auth.password != MANUAL_PASS:
-            return jsonify({"message": "Authentication Required"}), 401, \
-                   {'WWW-Authenticate': 'Basic realm="Plex Sync"'}
+        if not session.get('authenticated'):
+            return redirect(url_for('login', next=request.path))
         return f(*args, **kwargs)
     return decorated
 
@@ -336,7 +368,7 @@ def sync_worker():
 
             duration = round(time.monotonic() - start, 1)
             history.add({
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": now_local().isoformat(),
                 "label": task.label,
                 "path": task.mapped_folder,
                 "status": status,
@@ -365,7 +397,7 @@ def _find_plex_item(plex_instance, library, task: SyncTask):
         except Exception as exc:
             if "timeout" in str(exc).lower():
                 raise
-        
+
         # Fallback: title search + path match
         try:
             for res in library.search(title=clean_title):
@@ -458,6 +490,27 @@ def webhook_sonarr():
 @app.route('/webhook/radarr', methods=['POST'])
 def webhook_radarr():
     return process_webhook(request.get_json(silent=True) or {}, "radarr")
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = ""
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        if username == MANUAL_USER and password == MANUAL_PASS:
+            session.permanent = False
+            session['authenticated'] = True
+            next_url = request.args.get('next', url_for('manual_webhook'))
+            return redirect(next_url)
+        error = "Invalid username or password."
+    return render_template_string(LOGIN_TEMPLATE, error=error)
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 
 @app.route('/webhook/manual', methods=['GET', 'POST'])
@@ -685,6 +738,21 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
   .h-ts     { display: block; }
 
   .empty    { color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-align: center; padding: 16px 0; }
+
+  a.logout {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-decoration: none;
+    margin-left: auto;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: color 0.15s, border-color 0.15s;
+  }
+  a.logout:hover { color: var(--error); border-color: var(--error); }
 </style>
 </head>
 <body>
@@ -693,10 +761,11 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
     <div class="logo-dot"></div>
     <h1>PLEX-SERVARR-SYNC</h1>
     <span class="subtitle">Manual trigger</span>
+    <a class="logout" href="/logout">Logout</a>
   </header>
 
   <div class="card">
-    <div class="card-label">Trigger path scan</div>
+    <div class="card-label">Trigger path scan - (Path needs to be the same as your root path in sonarr or radarr)</div>
     <form method="post">
       <div class="input-row">
         <input type="text" name="path" placeholder="/mnt/media/tv/ShowName" autocomplete="off" spellcheck="false">
@@ -729,6 +798,147 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
       <p class="empty">No syncs yet.</p>
     {% endif %}
   </div>
+</div>
+</body>
+</html>'''
+
+LOGIN_TEMPLATE = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>plex-servarr-sync · Login</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #0d0d0f;
+    --surface: #161618;
+    --border: #2a2a2e;
+    --accent: #e5a00d;
+    --text: #e8e8e8;
+    --muted: #666;
+    --error: #f87171;
+    --radius: 4px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 36px 32px;
+    width: 100%;
+    max-width: 360px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 28px;
+  }
+
+  .logo-dot {
+    width: 10px; height: 10px;
+    background: var(--accent);
+    border-radius: 50%;
+    box-shadow: 0 0 12px var(--accent);
+    flex-shrink: 0;
+  }
+
+  h1 {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  label {
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  input {
+    display: block;
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  input:focus { border-color: var(--accent); }
+
+  button {
+    width: 100%;
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius);
+    color: #0d0d0f;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    padding: 11px;
+    cursor: pointer;
+    text-transform: uppercase;
+    margin-top: 4px;
+    transition: opacity 0.15s;
+  }
+
+  button:hover { opacity: 0.85; }
+
+  .error {
+    font-size: 11px;
+    color: var(--error);
+    background: rgba(248,113,113,0.07);
+    border: 1px solid var(--error);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <div class="logo-dot"></div>
+    <h1>Plex-Servarr-Sync</h1>
+  </div>
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+  <form method="post">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" autocomplete="username" autofocus>
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="current-password">
+    <button type="submit">Sign in</button>
+  </form>
 </div>
 </body>
 </html>'''
