@@ -124,6 +124,7 @@ A lightweight Python-based webhook receiver designed to synchronize Sonarr and R
 Configuration is handled via environment variables in a `.env` file.
 
 | **Variable**               | **Description**                                 | **Example**                                        | 
+| :----                      | ----                                            | ----:                                              |
 | `PLEX_URL`                 | URL of your Plex server.                        | `http://192.168.1.100:32400`                       | 
 | `PLEX_TOKEN`               | Your Plex API token.                            | `yY6Vy...`                                         | 
 | `PLEX_TIMEOUT`             | Timeout in seconds for Plex API requests.       | `60`                                               |
