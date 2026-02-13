@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── App source ────────────────────────────────────────────────────────────────
-COPY plex_sync.py .
+COPY plex_servarr_webhook.py .
 
 # Drop privileges
 USER appuser
