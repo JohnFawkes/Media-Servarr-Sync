@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:base"],
+  "timezone": "America/New_York",
+  "schedule": "before 5am every weekday",
+  "packageRules": [
+    {
+      "matchManagers": ["pip_requirements"],
+      "groupName": "python dependencies",
+      "automerge": true,
+      "automergeType": "pr",
+      "matchUpdateTypes": ["patch", "minor"]
+    }
+  ]
+}
+```
+
+That's genuinely all you need. Once committed, Renovate will open an onboarding PR first to confirm the config looks right, then start monitoring your `requirements.txt`.
+
+### What it does
+
+When a new version of `flask`, `PlexAPI`, `requests`, or `python-dotenv` is released, Renovate automatically opens a PR that looks like this:
+```
+chore(deps): update dependency flask 3.1.1 -> 3.1.2
