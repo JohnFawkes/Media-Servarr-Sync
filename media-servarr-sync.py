@@ -584,7 +584,7 @@ def logout():
     return redirect(url_for('login'))
 
 
-@app.route('/webhook/manual', methods=['GET', 'POST'])
+@app.route('/', methods=['GET', 'POST'])
 @requires_auth
 def manual_webhook():
     message = ""
