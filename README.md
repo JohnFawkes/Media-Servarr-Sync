@@ -20,7 +20,7 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Minimum file age** — optionally hold off scanning until a file is at least N seconds old
 - **Retry on timeout** — Plex scan attempts retry up to 3 times with automatic reconnection on stale sessions
 - **Health endpoint** — `/health` exposes queue depth, Plex connectivity, rclone mode, and recent sync history
-- **Manual trigger UI** — password-protected web UI at `/webhook/manual` for ad-hoc scans
+- **Manual trigger UI** — password-protected web UI at `/` for ad-hoc scans
 - **Sync history** — last 50 sync results (path, status, duration, errors) visible in the UI and health endpoint
 
 ---
@@ -152,7 +152,7 @@ SECTION_MAPPING={ "/mnt/media/tv": "1", "/mnt/media/movies": "2" }
 |---|---|---|---|
 | `/webhook/sonarr` | POST | None | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | None | Radarr webhook receiver |
-| `/webhook/manual` | GET / POST | Basic | Manual sync trigger UI |
+| `/` | GET / POST | Basic | Manual sync trigger UI |
 | `/health` | GET | None | JSON health + recent history |
 
 ### Health response example
