@@ -7,7 +7,7 @@ on:
     branches: [ "main", "master" ]
     # Only run if these specific files change
     paths:
-      - 'plex_servarr_sync.py'
+      - 'media-servarr-sync.py'
       - 'Dockerfile'
       - 'compose.yaml'
       - 'requirements.txt'
@@ -16,7 +16,7 @@ on:
     branches: [ "main", "master" ]
     # Only run if these specific files change
     paths:
-      - 'plex_servarr_sync.py'
+      - 'media-servarr-sync.py'
       - 'Dockerfile'
       - 'compose.yaml'
       - 'requirements.txt'
