@@ -757,7 +757,7 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
     padding: 10px 14px;
     outline: none;
     transition: border-color 0.15s;
-  }
+6  }
 
   input[type="text"]:focus {
     border-color: var(--accent);
@@ -1112,3 +1112,4 @@ if __name__ == '__main__':
 
     log.info("Webhook receiver active on port %d", PORT)
     app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+
