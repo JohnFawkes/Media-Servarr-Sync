@@ -178,6 +178,7 @@ class SyncTask:
     age_check_path: str
     mapped_folder: str
     label: str
+    episode: str = ""
     queued_at: float = field(default_factory=time.monotonic)
 
     def __eq__(self, other):
@@ -208,10 +209,15 @@ class SyncHistory:
                     status TEXT NOT NULL,
                     error TEXT,
                     duration_s REAL NOT NULL,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    episode TEXT
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON sync_history(created_at DESC)")
+            # Migrate existing databases that lack the episode column
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(sync_history)")}
+            if 'episode' not in existing:
+                conn.execute("ALTER TABLE sync_history ADD COLUMN episode TEXT")
             conn.commit()
 
     def add(self, entry: dict):
@@ -220,8 +226,8 @@ class SyncHistory:
             cutoff = time.time() - (self._retention_days * 86400)
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("""
-                    INSERT INTO sync_history (ts, label, path, status, error, duration_s, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO sync_history (ts, label, path, status, error, duration_s, created_at, episode)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     entry['ts'],
                     entry['label'],
@@ -229,7 +235,8 @@ class SyncHistory:
                     entry['status'],
                     entry.get('error', ''),
                     entry['duration_s'],
-                    time.time()
+                    time.time(),
+                    entry.get('episode', ''),
                 ))
                 # Prune old entries
                 conn.execute("DELETE FROM sync_history WHERE created_at < ?", (cutoff,))
@@ -241,7 +248,7 @@ class SyncHistory:
             with sqlite3.connect(self._db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute("""
-                    SELECT ts, label, path, status, error, duration_s
+                    SELECT ts, label, path, status, error, duration_s, episode
                     FROM sync_history
                     ORDER BY created_at DESC
                     LIMIT ? OFFSET ?
@@ -434,6 +441,7 @@ def sync_worker():
                 "status": status,
                 "error": error_msg,
                 "duration_s": duration,
+                "episode": task.episode,
             })
             sync_queue.task_done()
 
@@ -478,7 +486,7 @@ def _find_plex_item(plex_instance, library, task: SyncTask):
 # Webhook processing
 # ---------------------------------------------------------------------------
 
-def enqueue_sync(raw_path: str, label: str):
+def enqueue_sync(raw_path: str, label: str, episode: str = ""):
     """Validate, map, and enqueue a sync task. Returns (response_dict, http_status)."""
     if not raw_path:
         return {"status": "skipped", "reason": "empty path"}, 200
@@ -513,6 +521,7 @@ def enqueue_sync(raw_path: str, label: str):
         age_check_path=age_check_path,
         mapped_folder=mapped_folder,
         label=label,
+        episode=episode,
     )
     sync_queue.put(task)
     log.info("[%s] [QUEUE] Added (depth=%d): %s", label, sync_queue.qsize(), mapped_folder)
@@ -529,6 +538,7 @@ def process_webhook(data: dict, instance_type: str):
 
     label = instance_type.upper()
     raw_path = ""
+    episode = ""
     if 'movie' in data:
         raw_path = data['movie'].get('folderPath', '')
     elif 'series' in data:
@@ -540,12 +550,14 @@ def process_webhook(data: dict, instance_type: str):
             parts = relative_path.replace('\\', '/').split('/')
             if len(parts) > 1:
                 raw_path = series_path.rstrip('/') + '/' + parts[0]
+                episode = parts[-1]  # filename, e.g. "Show.S01E01.mkv"
             else:
                 raw_path = series_path
+                episode = parts[0]
         else:
             raw_path = series_path
 
-    result, status = enqueue_sync(raw_path, label)
+    result, status = enqueue_sync(raw_path, label, episode=episode)
     return jsonify(result), status
 
 
@@ -819,10 +831,11 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
   .dot-ok    { background: var(--success); }
   .dot-error { background: var(--error); }
 
-  .h-path   { color: var(--text); word-break: break-all; }
-  .h-meta   { color: var(--muted); text-align: right; white-space: nowrap; }
-  .h-label  { color: var(--accent); font-size: 10px; }
-  .h-error  { color: var(--error); font-size: 10px; margin-top: 2px; }
+  .h-path    { color: var(--text); word-break: break-all; }
+  .h-episode { color: var(--muted); font-size: 11px; margin-top: 2px; word-break: break-all; }
+  .h-meta    { color: var(--muted); text-align: right; white-space: nowrap; }
+  .h-label   { color: var(--accent); font-size: 10px; }
+  .h-error   { color: var(--error); font-size: 10px; margin-top: 2px; }
   .h-ts     { display: block; }
 
   .empty    { color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-align: center; padding: 16px 0; }
@@ -913,6 +926,7 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
         <div class="status-dot {{ 'dot-ok' if h.status == 'ok' else 'dot-error' }}"></div>
         <div>
           <span class="h-path">{{ h.path }}</span>
+          {% if h.episode %}<div class="h-episode">{{ h.episode }}</div>{% endif %}
           <div class="h-label">{{ h.label }} &nbsp;·&nbsp; {{ h.duration_s }}s</div>
           {% if h.error %}<div class="h-error">{{ h.error }}</div>{% endif %}
         </div>
