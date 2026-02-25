@@ -22,6 +22,7 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Health endpoint** — `/health` exposes queue depth, Plex connectivity, rclone mode, and recent sync history
 - **Manual trigger UI** — password-protected web UI at `/` for ad-hoc scans
 - **Sync history** — last 50 sync results (path, status, duration, errors) visible in the UI and health endpoint
+- **Episode display** — for Sonarr events, the episode filename (e.g. `Show.S01E01.mkv`) is shown beneath the season folder path in the sync history UI
 
 ---
 
