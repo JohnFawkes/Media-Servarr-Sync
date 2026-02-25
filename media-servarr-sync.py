@@ -545,17 +545,9 @@ def process_webhook(data: dict, instance_type: str):
         series_path = data['series'].get('path', '')
         episode_file = data.get('episodeFile', {})
         relative_path = episode_file.get('relativePath', '')
+        raw_path = series_path  # always scan the show root, never the season subfolder
         if relative_path:
-            # Extract the season subdirectory from the relative path (e.g. "Season 01/Show.S01E01.mkv" → "Season 01")
-            parts = relative_path.replace('\\', '/').split('/')
-            if len(parts) > 1:
-                raw_path = series_path.rstrip('/') + '/' + parts[0]
-                episode = parts[-1]  # filename, e.g. "Show.S01E01.mkv"
-            else:
-                raw_path = series_path
-                episode = parts[0]
-        else:
-            raw_path = series_path
+            episode = relative_path.replace('\\', '/').split('/')[-1]  # filename for display only
 
     result, status = enqueue_sync(raw_path, label, episode=episode)
     return jsonify(result), status
