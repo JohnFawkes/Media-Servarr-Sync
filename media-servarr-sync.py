@@ -1054,7 +1054,7 @@ LOGIN_TEMPLATE = '''<!DOCTYPE html>
     text-transform: uppercase;
     margin-top: 4px;
     transition: opacity 0.15s;
-  }
+4  }
 
   button:hover { opacity: 0.85; }
 
@@ -1112,4 +1112,3 @@ if __name__ == '__main__':
 
     log.info("Webhook receiver active on port %d", PORT)
     app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
-
