@@ -543,11 +543,34 @@ def process_webhook(data: dict, instance_type: str):
         raw_path = data['movie'].get('folderPath', '')
     elif 'series' in data:
         series_path = data['series'].get('path', '')
-        episode_file = data.get('episodeFile', {})
-        relative_path = episode_file.get('relativePath', '')
         raw_path = series_path  # always scan the show root, never the season subfolder
+
+        # Sonarr uses different keys depending on event type:
+        #   episodeFile        — single episode download/delete
+        #   episodeFiles       — batch/season-pack download
+        #   renamedEpisodeFiles — rename events
+        relative_path = ""
+        extra_count = 0
+
+        ef = data.get('episodeFile', {})
+        if ef:
+            relative_path = ef.get('relativePath', '')
+
+        if not relative_path:
+            efs = data.get('episodeFiles', [])
+            if efs:
+                relative_path = efs[0].get('relativePath', '')
+                extra_count = len(efs) - 1
+
+        if not relative_path:
+            refs = data.get('renamedEpisodeFiles', [])
+            if refs:
+                relative_path = refs[0].get('relativePath', '')
+                extra_count = len(refs) - 1
+
         if relative_path:
-            episode = relative_path.replace('\\', '/').split('/')[-1]  # filename for display only
+            filename = relative_path.replace('\\', '/').split('/')[-1]
+            episode = f"{filename} (+{extra_count} more)" if extra_count > 0 else filename
 
     result, status = enqueue_sync(raw_path, label, episode=episode)
     return jsonify(result), status
