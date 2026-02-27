@@ -269,7 +269,7 @@ class SyncHistory:
 
 history = SyncHistory(db_path="/data/sync_history.db", retention_days=HISTORY_DAYS)
 sync_queue: queue.Queue = queue.Queue()
-_in_flight: set = set()         # mapped_folder strings currently queued or being processed
+_in_flight: dict = {}           # mapped_folder -> SyncTask, currently queued or being processed
 _in_flight_lock = threading.Lock()
 _worker_alive = threading.Event()
 _worker_alive.set()
@@ -431,7 +431,7 @@ def sync_worker():
             log.error("[%s] [ERROR] %s", task.label, exc)
         finally:
             with _in_flight_lock:
-                _in_flight.discard(task.mapped_folder)
+                _in_flight.pop(task.mapped_folder, None)
 
             duration = round(time.monotonic() - start, 1)
             history.add({
@@ -486,6 +486,22 @@ def _find_plex_item(plex_instance, library, task: SyncTask):
 # Webhook processing
 # ---------------------------------------------------------------------------
 
+def _merge_episode_counts(existing: str, incoming: str) -> str:
+    """Accumulate episode counts when duplicate webhooks arrive for the same folder."""
+    def _count(ep: str) -> int:
+        if not ep:
+            return 0
+        parts = ep.split()
+        if len(parts) == 2 and parts[1] in ('episode', 'episodes') and parts[0].isdigit():
+            return int(parts[0])
+        return 1  # treat a filename as a single episode
+
+    total = _count(existing) + _count(incoming)
+    if total > 1:
+        return f"{total} episodes"
+    return existing or incoming
+
+
 def enqueue_sync(raw_path: str, label: str, episode: str = ""):
     """Validate, map, and enqueue a sync task. Returns (response_dict, http_status)."""
     if not raw_path:
@@ -507,13 +523,6 @@ def enqueue_sync(raw_path: str, label: str, episode: str = ""):
         log.warning("[%s] [SKIP] No section mapping for '%s'", label, mapped_folder)
         return {"status": "skipped", "reason": "no section mapping"}, 200
 
-    # Deduplication: skip if same folder is already queued/in-flight
-    with _in_flight_lock:
-        if mapped_folder in _in_flight:
-            log.info("[%s] [DEDUP] Already queued: %s", label, mapped_folder)
-            return {"status": "deduplicated"}, 200
-        _in_flight.add(mapped_folder)
-
     task = SyncTask(
         section_id=section_id,
         raw_path=raw_path,
@@ -523,6 +532,21 @@ def enqueue_sync(raw_path: str, label: str, episode: str = ""):
         label=label,
         episode=episode,
     )
+
+    # Deduplication: if same folder already queued, merge episode info instead of re-queuing
+    with _in_flight_lock:
+        if mapped_folder in _in_flight:
+            existing_task = _in_flight[mapped_folder]
+            if episode:
+                merged = _merge_episode_counts(existing_task.episode, episode)
+                existing_task.episode = merged
+                log.info("[%s] [DEDUP] Already queued: %s — merged episode info to '%s'",
+                         label, mapped_folder, merged)
+            else:
+                log.info("[%s] [DEDUP] Already queued: %s", label, mapped_folder)
+            return {"status": "deduplicated"}, 200
+        _in_flight[mapped_folder] = task
+
     sync_queue.put(task)
     log.info("[%s] [QUEUE] Added (depth=%d): %s", label, sync_queue.qsize(), mapped_folder)
     return {"status": "queued", "path": mapped_folder}, 200
@@ -729,12 +753,9 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
     padding-bottom: 20px;
   }
 
-  .logo-dot {
-    width: 10px; height: 10px;
-    background: var(--accent);
-    border-radius: 50%;
-    box-shadow: 0 0 12px var(--accent);
+  .logo-icon {
     flex-shrink: 0;
+    filter: drop-shadow(0 0 6px rgba(229,160,13,0.5));
   }
 
   h1 {
@@ -914,7 +935,11 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
 <body>
 <div class="shell">
   <header>
-    <div class="logo-dot"></div>
+    <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="28" height="28">
+      <rect width="24" height="24" rx="4" fill="#0d0d0f"/>
+      <path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
+      <polyline stroke="#e5a00d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
+    </svg>
     <h1>MEDIA SERVARR SYNC</h1>
     <span class="subtitle">Manual trigger</span>
     <a class="logout" href="/logout">Logout</a>
@@ -1039,12 +1064,9 @@ LOGIN_TEMPLATE = '''<!DOCTYPE html>
     margin-bottom: 28px;
   }
 
-  .logo-dot {
-    width: 10px; height: 10px;
-    background: var(--accent);
-    border-radius: 50%;
-    box-shadow: 0 0 12px var(--accent);
+  .logo-icon {
     flex-shrink: 0;
+    filter: drop-shadow(0 0 6px rgba(229,160,13,0.5));
   }
 
   h1 {
@@ -1114,7 +1136,11 @@ LOGIN_TEMPLATE = '''<!DOCTYPE html>
 <body>
 <div class="card">
   <div class="logo">
-    <div class="logo-dot"></div>
+    <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="28" height="28">
+      <rect width="24" height="24" rx="4" fill="#0d0d0f"/>
+      <path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
+      <polyline stroke="#e5a00d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
+    </svg>
     <h1>Media Servarr Sync</h1>
   </div>
   {% if error %}
