@@ -569,8 +569,11 @@ def process_webhook(data: dict, instance_type: str):
                 extra_count = len(refs) - 1
 
         if relative_path:
-            filename = relative_path.replace('\\', '/').split('/')[-1]
-            episode = f"{filename} (+{extra_count} more)" if extra_count > 0 else filename
+            total = extra_count + 1
+            if total > 1:
+                episode = f"{total} episodes"
+            else:
+                episode = relative_path.replace('\\', '/').split('/')[-1]
 
     result, status = enqueue_sync(raw_path, label, episode=episode)
     return jsonify(result), status
@@ -679,6 +682,7 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Media Servarr Sync</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap');
 
@@ -848,6 +852,7 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
 
   .h-path    { color: var(--text); word-break: break-all; }
   .h-episode { color: var(--muted); font-size: 11px; margin-top: 2px; word-break: break-all; }
+  .episode-count-badge { display: inline-block; margin-top: 3px; padding: 1px 7px; background: var(--accent); color: var(--bg); border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; }
   .h-meta    { color: var(--muted); text-align: right; white-space: nowrap; }
   .h-label   { color: var(--accent); font-size: 10px; }
   .h-error   { color: var(--error); font-size: 10px; margin-top: 2px; }
@@ -941,7 +946,14 @@ MANUAL_UI_TEMPLATE = '''<!DOCTYPE html>
         <div class="status-dot {{ 'dot-ok' if h.status == 'ok' else 'dot-error' }}"></div>
         <div>
           <span class="h-path">{{ h.path }}</span>
-          {% if h.episode %}<div class="h-episode">{{ h.episode }}</div>{% endif %}
+          {% if h.episode %}
+            {% set ep_words = h.episode.split() %}
+            {% if ep_words|length == 2 and ep_words[1] in ['episode', 'episodes'] %}
+            <div><span class="episode-count-badge">{{ h.episode }}</span></div>
+            {% else %}
+            <div class="h-episode">{{ h.episode }}</div>
+            {% endif %}
+          {% endif %}
           <div class="h-label">{{ h.label }} &nbsp;·&nbsp; {{ h.duration_s }}s</div>
           {% if h.error %}<div class="h-error">{{ h.error }}</div>{% endif %}
         </div>
@@ -983,6 +995,7 @@ LOGIN_TEMPLATE = '''<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Media Servarr Sync · Login</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
