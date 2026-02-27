@@ -54,10 +54,12 @@ services:
       # Generate one with: python3 -c "import secrets; print(secrets.token_hex(32))"
       SECRET_KEY:  "${SECRET_KEY}"
 
-    # Mount the same media root that Plex uses so age-checks work.
+    # Mount the host media root into the container at the path Plex sees.
+    # MEDIA_ROOT  = host path  (e.g. /mnt/nvme/MergerFS)
+    # CONTAINER_MEDIA = path inside this container = the path Plex uses (e.g. /data/media)
     # Remove this volume if you don't use MINIMUM_AGE.
     volumes:
-      - "${MEDIA_ROOT:-/mnt/media}:${MEDIA_ROOT:-/mnt/media}:ro,rslave"
+      - "${MEDIA_ROOT:-/mnt/media}:${CONTAINER_MEDIA:-/mnt/media}:ro,rslave"
       # Persistent storage for sync history database
       - media-servarr-sync-data:/data
 

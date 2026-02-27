@@ -77,7 +77,8 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `MANUAL_USER` | | `admin` | Username for the manual trigger UI |
 | `MANUAL_PASS` | | `changeme` | Password for the manual trigger UI |
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
-| `MEDIA_ROOT` | | `/mnt/media` | Host path mounted read-only for age checks (only needed if `MINIMUM_AGE > 0`) |
+| `MEDIA_ROOT` | | `/mnt/media` | Host path to your media root, mounted into the container (only needed if `MINIMUM_AGE > 0`) |
+| `CONTAINER_MEDIA` | | `/mnt/media` | Path **inside this container** where `MEDIA_ROOT` is mounted — must match the path Plex uses to see your files |
 
 ### Rclone settings
 
@@ -107,7 +108,7 @@ Set `USE_RCLONE=true` **only** if you serve your media through an rclone VFS mou
 
 These are JSON objects mapping path **prefixes**. Matching is case-insensitive and longest-prefix wins.
 
-**`PATH_REPLACEMENTS`** — translates paths from how Sonarr/Radarr report them to how they appear *inside the media-servarr-sync container* (and therefore inside Plex):
+**`PATH_REPLACEMENTS`** — translates paths from how Sonarr/Radarr report them to the path Plex uses (i.e. your `CONTAINER_MEDIA` prefix):
 
 ```env
 PATH_REPLACEMENTS={ "/data/tv": "/mnt/media/tv", "/data/movies": "/mnt/media/movies" }
