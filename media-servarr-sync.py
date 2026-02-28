@@ -508,6 +508,15 @@ def _merge_episode_counts(existing: str, incoming: str) -> str:
             return int(parts[0])
         return 1  # treat a filename as a single episode
 
+    def _ep_key(ep: str) -> str | None:
+        """Return a normalised SxxExx key if the string contains one, else None."""
+        m = re.search(r'[Ss](\d+)[Ee](\d+)', ep)
+        return f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}" if m else None
+
+    # If both strings name the same episode (e.g. import then rename), don't double-count.
+    if _ep_key(existing) and _ep_key(existing) == _ep_key(incoming):
+        return existing
+
     total = _count(existing) + _count(incoming)
     if total > 1:
         return f"{total} episodes"
