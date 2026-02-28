@@ -6,20 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased] → v1.0.0
+## [Unreleased]
 
-### Added
+### 2026-02-28
+
+#### Added
 - Logo SVG now displayed in the WebUI main dashboard header and login card, replacing the plain dot placeholder
 - CSS `drop-shadow` glow applied to the logo icon for visual consistency with the accent colour
 - Post-sync cooldown window (`SYNC_COOLDOWN`, default `5m`) — after a path finishes processing it is held in a cooldown set for the configured duration; any Sonarr follow-up events that arrive within that window (e.g. the `Rename` webhook that fires after a `Download`) are silently dropped, preventing duplicate history entries for the same show
 
-### Fixed
+#### Fixed
 - Multi-episode deduplication: when Sonarr fires 3+ rapid webhooks for separate episodes that all map to the same show folder, the dedup logic now merges the episode counts instead of silently discarding duplicates — the history record correctly shows e.g. `3 episodes` rather than only the first episode's filename
 - Duplicate history entries created when Sonarr's `Rename` event arrives after the `Download` event has already finished processing — the new cooldown window absorbs the trailing webhook so each import appears exactly once in the history
-
----
-
-## [v1.0.0] - TBD
 
 ### 2026-02-27
 
