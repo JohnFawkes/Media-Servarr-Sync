@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [v0.1.2] - Unreleased
+## [v0.1.2]
 
 ### Added
 - `SYNC_COOLDOWN` documented in README env var table and `.env.example`
