@@ -75,6 +75,7 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `PORT` | | `5000` | Port the webhook receiver listens on |
 | `WEBHOOK_DELAY` | | `30` | Time to wait after receiving a webhook before acting. Accepts `30`, `30s`, `5m`, `1h` |
 | `MINIMUM_AGE` | | `0` | Minimum file age before scanning. Same format as `WEBHOOK_DELAY`. `0` disables |
+| `SYNC_COOLDOWN` | | `5m` | After a path finishes processing, ignore further webhooks for it during this window. Prevents duplicate history entries when Sonarr fires a trailing `Rename` event after a `Download`. Set to `0` to disable. |
 | `HISTORY_DAYS` | | `7` | Number of days to retain sync history. Older entries are auto-deleted. |
 | `SECTION_MAPPING` | ✔️ | `{}` | JSON map of path prefixes → Plex library section IDs |
 | `PATH_REPLACEMENTS` | | `{}` | JSON map: Sonarr/Radarr path prefix → path as seen inside this container |
@@ -99,7 +100,7 @@ Set `USE_RCLONE=true` **only** if you serve your media through an rclone VFS mou
 
 ### Duration format
 
-`WEBHOOK_DELAY` and `MINIMUM_AGE` accept:
+`WEBHOOK_DELAY`, `MINIMUM_AGE`, and `SYNC_COOLDOWN` accept:
 
 | Format | Meaning |
 |---|---|
