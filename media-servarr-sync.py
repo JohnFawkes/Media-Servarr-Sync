@@ -138,6 +138,7 @@ PORT            = int(os.getenv("PORT", "5000"))
 WEBHOOK_DELAY   = parse_duration(os.getenv("WEBHOOK_DELAY", "30"))
 MINIMUM_AGE     = parse_duration(os.getenv("MINIMUM_AGE", "0"))
 HISTORY_DAYS    = int(os.getenv("HISTORY_DAYS", "7"))
+SYNC_COOLDOWN   = parse_duration(os.getenv("SYNC_COOLDOWN", "5m"))
 MANUAL_USER     = os.getenv("MANUAL_USER", "admin")
 MANUAL_PASS     = os.getenv("MANUAL_PASS", "password")
 # Used to sign session cookies — set a long random string in your .env
@@ -270,7 +271,16 @@ class SyncHistory:
 history = SyncHistory(db_path="/data/sync_history.db", retention_days=HISTORY_DAYS)
 sync_queue: queue.Queue = queue.Queue()
 _in_flight: dict = {}           # mapped_folder -> SyncTask, currently queued or being processed
+_cooldown: dict = {}            # mapped_folder -> expiry monotonic timestamp, recently completed
 _in_flight_lock = threading.Lock()
+
+
+def _prune_cooldown():
+    """Remove expired cooldown entries. Must be called with _in_flight_lock held."""
+    now = time.monotonic()
+    expired = [k for k, v in _cooldown.items() if now >= v]
+    for k in expired:
+        del _cooldown[k]
 _worker_alive = threading.Event()
 _worker_alive.set()
 
@@ -432,6 +442,8 @@ def sync_worker():
         finally:
             with _in_flight_lock:
                 _in_flight.pop(task.mapped_folder, None)
+                if SYNC_COOLDOWN > 0:
+                    _cooldown[task.mapped_folder] = time.monotonic() + SYNC_COOLDOWN
 
             duration = round(time.monotonic() - start, 1)
             history.add({
@@ -533,7 +545,7 @@ def enqueue_sync(raw_path: str, label: str, episode: str = ""):
         episode=episode,
     )
 
-    # Deduplication: if same folder already queued, merge episode info instead of re-queuing
+    # Deduplication: if same folder already queued or in cooldown, skip re-queuing
     with _in_flight_lock:
         if mapped_folder in _in_flight:
             existing_task = _in_flight[mapped_folder]
@@ -545,6 +557,14 @@ def enqueue_sync(raw_path: str, label: str, episode: str = ""):
             else:
                 log.info("[%s] [DEDUP] Already queued: %s", label, mapped_folder)
             return {"status": "deduplicated"}, 200
+
+        if SYNC_COOLDOWN > 0:
+            _prune_cooldown()
+            expiry = _cooldown.get(mapped_folder, 0)
+            if time.monotonic() < expiry:
+                log.info("[%s] [COOLDOWN] Recently synced, dropping follow-up event: %s", label, mapped_folder)
+                return {"status": "deduplicated"}, 200
+
         _in_flight[mapped_folder] = task
 
     sync_queue.put(task)
