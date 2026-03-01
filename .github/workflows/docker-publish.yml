@@ -108,15 +108,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
-          format: sarif
-          output: trivy-results.sarif
-          ignore-unfixed: true
-          vuln-type: os,library
-          severity: CRITICAL,HIGH
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --ignore-unfixed \
+            --vuln-type os,library \
+            --severity CRITICAL,HIGH \
+            ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
 
       - name: Upload Trivy scan results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
