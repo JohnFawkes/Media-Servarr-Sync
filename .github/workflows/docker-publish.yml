@@ -121,3 +121,5 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-results.sarif
+          ref: ${{ github.ref }}
+          sha: ${{ github.sha }}
