@@ -267,6 +267,43 @@ class SyncHistory:
         """For backward compatibility with old code."""
         return self.get_recent(limit=50)
 
+    def get_stats(self) -> dict:
+        """Return aggregate statistics for the current retention window."""
+        with self._lock:
+            with sqlite3.connect(self._db_path) as conn:
+                row = conn.execute("""
+                    SELECT
+                        COUNT(*)                                              AS total,
+                        SUM(CASE WHEN status = 'ok'     THEN 1 ELSE 0 END)  AS successful,
+                        SUM(CASE WHEN status = 'error'  THEN 1 ELSE 0 END)  AS failed,
+                        SUM(CASE WHEN label  = 'SONARR' THEN 1 ELSE 0 END)  AS sonarr,
+                        SUM(CASE WHEN label  = 'RADARR' THEN 1 ELSE 0 END)  AS radarr,
+                        SUM(CASE WHEN label  = 'MANUAL' THEN 1 ELSE 0 END)  AS manual,
+                        ROUND(AVG(duration_s), 2)                            AS avg_duration_s
+                    FROM sync_history
+                """).fetchone()
+                last = conn.execute("""
+                    SELECT ts, status, label, path
+                    FROM sync_history
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """).fetchone()
+        return {
+            "total":          row[0] or 0,
+            "successful":     row[1] or 0,
+            "failed":         row[2] or 0,
+            "sonarr":         row[3] or 0,
+            "radarr":         row[4] or 0,
+            "manual":         row[5] or 0,
+            "avg_duration_s": row[6] or 0.0,
+            "last_sync": {
+                "ts":     last[0],
+                "status": last[1],
+                "label":  last[2],
+                "path":   last[3],
+            } if last else None,
+        }
+
 
 history = SyncHistory(db_path="/data/sync_history.db", retention_days=HISTORY_DAYS)
 sync_queue: queue.Queue = queue.Queue()
@@ -723,6 +760,52 @@ def health():
         "worker_alive": _worker_alive.is_set(),
         "recent_history": history.as_list()[:10],
     }), 200 if plex_ok else 207
+
+
+@app.route('/api/stats', methods=['GET'])
+def api_stats():
+    """Aggregate stats endpoint — designed for Homepage customapi widget.
+
+    Example Homepage widget config:
+        widget:
+          type: customapi
+          url: http://<host>:5000/api/stats
+          refreshInterval: 30000
+          mappings:
+            - field: syncs.total    label: Total    format: number
+            - field: syncs.ok       label: Success  format: number
+            - field: syncs.failed   label: Failed   format: number
+            - field: queue.depth    label: Queued   format: number
+    """
+    stats = history.get_stats()
+    last  = stats["last_sync"]
+    with _in_flight_lock:
+        in_flight_count = len(_in_flight)
+    return jsonify({
+        "syncs": {
+            "total":          stats["total"],
+            "ok":             stats["successful"],
+            "failed":         stats["failed"],
+            "sonarr":         stats["sonarr"],
+            "radarr":         stats["radarr"],
+            "manual":         stats["manual"],
+            "avg_duration_s": stats["avg_duration_s"],
+        },
+        "queue": {
+            "depth":     sync_queue.qsize(),
+            "in_flight": in_flight_count,
+        },
+        "worker": {
+            "alive": _worker_alive.is_set(),
+        },
+        "last_sync": {
+            "at":     last["ts"]     if last else None,
+            "status": last["status"] if last else None,
+            "label":  last["label"]  if last else None,
+            "path":   last["path"]   if last else None,
+        },
+        "retention_days": HISTORY_DAYS,
+    })
 
 
 # ---------------------------------------------------------------------------
