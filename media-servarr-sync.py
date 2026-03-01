@@ -1197,12 +1197,28 @@ def _handle_shutdown(signum, frame):
     sys.exit(0)
 
 
+_REDACT_RE = re.compile(r'token|pass|secret|key|credential|auth', re.IGNORECASE)
+
+
+def _log_env():
+    """Log all environment variables, redacting sensitive ones."""
+    log.info("=== Environment ===")
+    for name, value in sorted(os.environ.items()):
+        display = "***REDACTED***" if _REDACT_RE.search(name) else value
+        log.info("  %-40s = %s", name, display)
+    log.info("===================")
+
+
 if __name__ == '__main__':
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
 
+    # Suppress werkzeug's "Running on ..." banner lines
+    logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
     log.info("=== Media Servarr Sync starting ===")
     log.info("Rclone integration: %s", "ENABLED" if USE_RCLONE else "DISABLED (set USE_RCLONE=true to enable)")
+    _log_env()
 
     worker_thread = threading.Thread(target=sync_worker, daemon=True, name="sync-worker")
     worker_thread.start()
