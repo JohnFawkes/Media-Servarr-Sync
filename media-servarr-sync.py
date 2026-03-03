@@ -699,7 +699,7 @@ def process_webhook(data: dict, instance_type: str):
         'MovieFileDeleted',   'MovieDelete',     # Radarr
     }
     if event in _SKIP:
-        log.debug("[%s] Skipping event type '%s'", instance_type.upper(), event)
+        log.info("[%s] Skipping event type '%s' (no scan needed)", instance_type.upper(), event)
         return jsonify({"status": "skipped", "reason": f"event type '{event}' not handled"}), 200
 
     label = instance_type.upper()
@@ -717,11 +717,28 @@ def process_webhook(data: dict, instance_type: str):
         #   renamedEpisodeFiles — rename events
         episode_files = []
 
+        # Build the set of OLD filenames being replaced so we can discard stale episode info.
+        # On upgrade events Sonarr populates `deletedFiles` with the file(s) that were replaced.
+        # In some Sonarr versions the `episodeFile` field in the Download webhook can transiently
+        # point to the old file before the rename completes; filtering against deletedFiles guards
+        # against recording the replaced filename in sync history.
+        _deleted_filenames: set = set()
+        if data.get('isUpgrade'):
+            for df in data.get('deletedFiles', []):
+                dfn = df.get('relativePath', '').replace('\\', '/').split('/')[-1]
+                if dfn:
+                    _deleted_filenames.add(dfn)
+
         ef = data.get('episodeFile', {})
         if ef:
             rp = ef.get('relativePath', '')
             if rp:
-                episode_files = [rp.replace('\\', '/').split('/')[-1]]
+                fn = rp.replace('\\', '/').split('/')[-1]
+                if fn not in _deleted_filenames:
+                    episode_files = [fn]
+                else:
+                    log.info("[%s] episodeFile '%s' matches a deletedFile — discarding stale episode info",
+                             label, fn)
 
         if not episode_files:
             efs = data.get('episodeFiles', [])
