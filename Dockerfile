@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ── App source ────────────────────────────────────────────────────────────────
 COPY media-servarr-sync.py .
+COPY templates/ templates/
 
 # Create data directory for persistent storage
 RUN mkdir -p /data && chown appuser:appuser /data
