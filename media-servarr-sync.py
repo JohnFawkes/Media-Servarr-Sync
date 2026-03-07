@@ -920,6 +920,15 @@ def process_webhook(data: dict, instance_type: str):
 
     # Sonarr and Radarr both place customFormats at the TOP LEVEL of the webhook
     # payload, not inside episodeFile/movieFile.  Merge them in now.
+    #
+    # Always log raw values so operators can see exactly what the arr sent,
+    # regardless of whether extraction succeeded.
+    _raw_file   = data.get('episodeFile') or data.get('movieFile') or {}
+    _raw_qual   = _raw_file.get('quality', '<MISSING>')
+    _raw_cf     = data.get('customFormats', '<MISSING>')
+    log.info("[%s] Raw webhook fields — episodeFile/movieFile.quality=%r  top-level customFormats=%r",
+             label, _raw_qual, _raw_cf)
+
     for cf in data.get('customFormats', []):
         if isinstance(cf, dict):
             name = cf.get('name', '')
