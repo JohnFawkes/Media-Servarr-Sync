@@ -1101,11 +1101,7 @@ def login():
         if username == MANUAL_USER and password == MANUAL_PASS:
             session.permanent = False
             session['authenticated'] = True
-            next_url = request.args.get('next', '')
-            parsed = urllib.parse.urlparse(next_url)
-            if not next_url or parsed.scheme or parsed.netloc or not next_url.startswith('/') or next_url.startswith('//'):
-                next_url = url_for('manual_webhook')
-            return redirect(next_url)
+            return redirect(url_for('manual_webhook'))
         error = "Invalid username or password."
     return render_template('login.html', error=error)
 

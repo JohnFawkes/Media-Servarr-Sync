@@ -11,6 +11,7 @@ on:
       - 'Dockerfile'
       - 'compose.yaml'
       - 'requirements.txt'
+      - 'templates/**'
 
   workflow_dispatch:
 
@@ -22,6 +23,7 @@ on:
       - 'Dockerfile'
       - 'compose.yaml'
       - 'requirements.txt'
+      - 'templates/**'
 
 env:
   # Use docker.io for Docker Hub if you prefer
