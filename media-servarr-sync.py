@@ -1533,7 +1533,7 @@ def api_sessions():
         return jsonify({'sessions': result, 'machine_id': machine_id})
     except Exception as exc:
         log.error("Error fetching sessions: %s", exc)
-        return jsonify({'error': str(exc), 'sessions': []}), 500
+        return jsonify({'error': 'Failed to retrieve sessions.', 'sessions': []}), 500
 
 
 @app.route('/api/thumb')
@@ -1595,7 +1595,8 @@ def api_geoip():
         out.pop('_ts', None)
         return jsonify(out)
     except Exception as exc:
-        return jsonify({'error': str(exc)}), 500
+        log.warning("GeoIP lookup failed for ip=%r: %s", request.args.get('ip'), exc)
+        return jsonify({'error': 'Geolocation lookup failed.'}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -1787,14 +1788,14 @@ def accept_invite(token):
         err = str(exc)
         log.error("[INVITE] Acceptance error for '%s': %s", plex_username, exc)
         if 'already' in err.lower() or 'exist' in err.lower():
-            err = f"'{plex_username}' may already have access, or has already been invited."
+            user_err = f"'{plex_username}' may already have access, or has already been invited."
         elif 'not found' in err.lower() or 'invalid' in err.lower() or '404' in err:
-            err = f"Plex account '{plex_username}' not found. Please check your username or email."
+            user_err = f"Plex account '{plex_username}' not found. Please check your username or email."
         else:
-            err = f"Could not process invite: {err}"
+            user_err = "Could not process the invite. Please try again or contact the server owner."
         return render_template(
             'invite_onboard.html',
-            invite=invite, step='accept', error=err,
+            invite=invite, step='accept', error=user_err,
             token=token, section_names=[], plex_server_name=plex_server_name,
             plex_username=plex_username,
         )
