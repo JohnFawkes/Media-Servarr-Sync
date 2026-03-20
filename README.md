@@ -37,6 +37,9 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 
 ## **📷Screenshots**
 
+* **Login**
+![Login](screenshots/login.png)
+
 * **WebUI**
 ![WebUI](screenshots/webui.png)
 ![Episode Count Hover](screenshots/episode_count.png)
