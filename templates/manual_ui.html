@@ -253,7 +253,65 @@
 
   .page-info {
     color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
+
+  .page-nav-group {
+    display: flex;
+    gap: 4px;
+  }
+
+  .pagination-top {
+    margin-top: 0;
+    margin-bottom: 12px;
+    padding-top: 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .jump-form {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .jump-input {
+    width: 52px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 4px 6px;
+    text-align: center;
+  }
+
+  .jump-input:focus { outline: none; border-color: var(--accent); }
+  .jump-input::-webkit-inner-spin-button,
+  .jump-input::-webkit-outer-spin-button { opacity: 0.4; }
+
+  /* back-to-top */
+  #back-to-top {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--accent);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    padding: 8px 12px;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, border-color 0.15s;
+    z-index: 100;
+  }
+  #back-to-top.visible { opacity: 1; pointer-events: auto; }
+  #back-to-top:hover { border-color: var(--accent); background: var(--accent-dim); }
 
   a.logout {
     font-family: 'IBM Plex Mono', monospace;
@@ -360,6 +418,7 @@
 </style>
 </head>
 <body>
+<button id="back-to-top" title="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑ Top</button>
 <aside class="legend">
   <div class="legend-title">Tag Legend</div>
   <div class="legend-item">
@@ -377,11 +436,13 @@
 </aside>
 <div class="shell">
   <header>
+    <a href="/" style="display:inline-flex;align-items:center;" title="Home">
     <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="28" height="28">
       <rect width="24" height="24" rx="4" fill="#0d0d0f"/>
       <path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
       <polyline stroke="#e5a00d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
     </svg>
+    </a>
     <h1>MEDIA SERVARR SYNC</h1>
     <span class="subtitle">Manual trigger</span>
     <a class="logout" href="/logout">Logout</a>
@@ -438,6 +499,42 @@
         {% endif %}
       </div>
     </div>
+    {% if total_pages > 1 %}
+    <div class="pagination pagination-top" id="pagination-top">
+      {% if page > 1 %}
+      <div class="page-nav-group">
+        <a href="?{{ filter_qs | safe }}&page=1" class="page-link" title="First">«</a>
+        <a href="?{{ filter_qs | safe }}&page={{ page - 1 }}" class="page-link">← Prev</a>
+      </div>
+      {% else %}
+      <div class="page-nav-group">
+        <span class="page-link disabled" title="First">«</span>
+        <span class="page-link disabled">← Prev</span>
+      </div>
+      {% endif %}
+      <span class="page-info">
+        Page {{ page }} of {{ total_pages }}
+        <form method="get" class="jump-form" onsubmit="return jumpPage(this, {{ total_pages }})">
+          <input type="hidden" name="status" value="{{ status_filter }}">
+          <input type="hidden" name="quality" value="{{ quality_filter }}">
+          <input type="hidden" name="profile" value="{{ profile_filter }}">
+          <input type="hidden" name="q" value="{{ search_q }}">
+          <input class="jump-input" type="number" name="page" min="1" max="{{ total_pages }}" placeholder="{{ page }}" title="Jump to page">
+        </form>
+      </span>
+      {% if page < total_pages %}
+      <div class="page-nav-group">
+        <a href="?{{ filter_qs | safe }}&page={{ page + 1 }}" class="page-link">Next →</a>
+        <a href="?{{ filter_qs | safe }}&page={{ total_pages }}" class="page-link" title="Last">»</a>
+      </div>
+      {% else %}
+      <div class="page-nav-group">
+        <span class="page-link disabled">Next →</span>
+        <span class="page-link disabled" title="Last">»</span>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
     <div id="history-body">
     {% if history %}
       {% for h in history %}
@@ -492,17 +589,38 @@
       {% if total_pages > 1 %}
       <div class="pagination">
         {% if page > 1 %}
-        <a href="?{{ filter_qs | safe }}&page={{ page - 1 }}" class="page-link">← Prev</a>
+        <div class="page-nav-group">
+          <a href="?{{ filter_qs | safe }}&page=1" class="page-link" title="First">«</a>
+          <a href="?{{ filter_qs | safe }}&page={{ page - 1 }}" class="page-link">← Prev</a>
+        </div>
         {% else %}
-        <span class="page-link disabled">← Prev</span>
+        <div class="page-nav-group">
+          <span class="page-link disabled" title="First">«</span>
+          <span class="page-link disabled">← Prev</span>
+        </div>
         {% endif %}
 
-        <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+        <span class="page-info">
+          Page {{ page }} of {{ total_pages }}
+          <form method="get" class="jump-form" onsubmit="return jumpPage(this, {{ total_pages }})">
+            <input type="hidden" name="status" value="{{ status_filter }}">
+            <input type="hidden" name="quality" value="{{ quality_filter }}">
+            <input type="hidden" name="profile" value="{{ profile_filter }}">
+            <input type="hidden" name="q" value="{{ search_q }}">
+            <input class="jump-input" type="number" name="page" min="1" max="{{ total_pages }}" placeholder="{{ page }}" title="Jump to page">
+          </form>
+        </span>
 
         {% if page < total_pages %}
-        <a href="?{{ filter_qs | safe }}&page={{ page + 1 }}" class="page-link">Next →</a>
+        <div class="page-nav-group">
+          <a href="?{{ filter_qs | safe }}&page={{ page + 1 }}" class="page-link">Next →</a>
+          <a href="?{{ filter_qs | safe }}&page={{ total_pages }}" class="page-link" title="Last">»</a>
+        </div>
         {% else %}
-        <span class="page-link disabled">Next →</span>
+        <div class="page-nav-group">
+          <span class="page-link disabled">Next →</span>
+          <span class="page-link disabled" title="Last">»</span>
+        </div>
         {% endif %}
       </div>
       {% endif %}
@@ -574,7 +692,24 @@
 
   if (btn) btn.addEventListener('click', doRefresh);
   startCountdown();
+
+  /* ---------- back to top ---------- */
+  var btt = document.getElementById('back-to-top');
+  if (btt) {
+    window.addEventListener('scroll', function() {
+      btt.classList.toggle('visible', window.scrollY > 300);
+    });
+  }
 })();
+
+/* ---------- jump to page ---------- */
+function jumpPage(form, maxPage) {
+  var val = parseInt(form.page.value, 10);
+  if (!val || val < 1) val = 1;
+  if (val > maxPage) val = maxPage;
+  form.page.value = val;
+  return true;
+}
 </script>
 </body>
 </html>
