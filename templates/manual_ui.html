@@ -64,15 +64,6 @@
     color: var(--accent);
   }
 
-  .subtitle {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    color: var(--muted);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-left: auto;
-  }
-
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -313,20 +304,33 @@
   #back-to-top.visible { opacity: 1; pointer-events: auto; }
   #back-to-top:hover { border-color: var(--accent); background: var(--accent-dim); }
 
-  a.logout {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-    text-decoration: none;
+  nav {
+    display: flex;
+    gap: 6px;
     margin-left: auto;
+    align-items: center;
+  }
+
+  nav a {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); text-decoration: none;
     padding: 4px 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: 1px solid var(--border); border-radius: var(--radius);
     transition: color 0.15s, border-color 0.15s;
   }
-  a.logout:hover { color: var(--error); border-color: var(--error); }
+  nav a:hover { color: var(--text); border-color: var(--text); }
+  nav a.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+  nav a.logout:hover { color: var(--error); border-color: var(--error); }
+
+  .demo-banner {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px; letter-spacing: 0.04em;
+    color: var(--warn); background: rgba(251,146,60,0.07);
+    border: 1px solid rgba(251,146,60,0.3); border-radius: var(--radius);
+    padding: 8px 14px; margin-bottom: 20px;
+    text-align: center;
+  }
 
   .refresh-btn {
     background: none; border: 1px solid var(--border); border-radius: var(--radius);
@@ -444,9 +448,16 @@
     </svg>
     </a>
     <h1>MEDIA SERVARR SYNC</h1>
-    <span class="subtitle">Manual trigger</span>
-    <a class="logout" href="/logout">Logout</a>
+    <nav>
+      <a href="/" class="active">Sync</a>
+      <a href="/now-playing">Now Playing</a>
+      <a href="/invite">Invite</a>
+      <a href="/logout" class="logout">Logout</a>
+    </nav>
   </header>
+  {% if demo %}
+  <div class="demo-banner">⚠ Demo mode — showing sample data</div>
+  {% endif %}
 
   <div class="card">
     <div class="card-label">Trigger path scan - (Path needs to be the same as your root path in sonarr or radarr)</div>

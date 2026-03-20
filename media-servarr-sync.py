@@ -146,6 +146,10 @@ MANUAL_USER     = os.getenv("MANUAL_USER", "admin")
 MANUAL_PASS     = os.getenv("MANUAL_PASS", "password")
 # Used to sign session cookies — set a long random string in your .env
 SECRET_KEY      = os.getenv("SECRET_KEY", os.urandom(24).hex())
+# Demo mode: enables /login/demo and populates pages with fake data for screenshots
+DEMO_MODE           = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "yes")
+ONBOARD_WIKI_URL    = os.getenv("ONBOARD_WIKI_URL", "").strip()
+ONBOARD_REQUEST_URL = os.getenv("ONBOARD_REQUEST_URL", "").strip()
 
 # Optional Sonarr/Radarr API credentials — used to look up quality profile names.
 # If unset, quality_profile badges are simply omitted.
@@ -1077,6 +1081,174 @@ def process_webhook(data: dict, instance_type: str):
 
 
 # ---------------------------------------------------------------------------
+# Demo mode — fake data for screenshots / public demos
+# ---------------------------------------------------------------------------
+
+_DEMO_SESSIONS = [
+    {
+        "user": "john", "title": "Ozymandias", "show": "Breaking Bad",
+        "episode": "S05 · E14", "type": "episode", "player": "Plex for Apple TV",
+        "state": "playing", "progress_pct": 42,
+        "duration_str": "47:12", "position_str": "19:50",
+        "quality": "1080p", "stream_type": "Direct Play", "transcode": False,
+    },
+    {
+        "user": "sarah", "title": "Dune: Part Two", "show": None,
+        "episode": None, "type": "movie", "player": "Plex Web",
+        "state": "playing", "progress_pct": 68,
+        "duration_str": "2:46:00", "position_str": "1:52:53",
+        "quality": "4K", "stream_type": "Direct Stream", "transcode": False,
+    },
+    {
+        "user": "mike", "title": "Napkins", "show": "The Bear",
+        "episode": "S03 · E01", "type": "episode", "player": "Plex for Android",
+        "state": "paused", "progress_pct": 15,
+        "duration_str": "39:04", "position_str": "5:51",
+        "quality": "720p", "stream_type": "Transcode", "transcode": True,
+    },
+]
+
+_DEMO_INVITE_USERS = [
+    {"name": "alice",   "email": "alice@example.com",   "status": "active",  "libraries": ["TV Shows", "Movies"],          "joined": "2024-11-15"},
+    {"name": "bob",     "email": "bob@example.com",     "status": "active",  "libraries": ["Movies"],                      "joined": "2024-12-03"},
+    {"name": "charlie", "email": "charlie@example.com", "status": "pending", "libraries": ["TV Shows", "Movies"],          "joined": "2025-01-08"},
+    {"name": "diana",   "email": "diana@example.com",   "status": "active",  "libraries": ["TV Shows", "Movies", "Music"], "joined": "2024-10-22"},
+]
+
+
+def _demo_history() -> list:
+    """Return fake sync history entries for demo/screenshot mode."""
+    from datetime import timedelta
+    now = now_local()
+    raw = [
+        {
+            "ts": (now - timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "SONARR", "status": "ok", "error": "", "duration_s": 3.2,
+            "path": "/media/tv/Breaking Bad (2008)/Season 5/",
+            "episode": "Breaking.Bad.S05E14.Ozymandias.1080p.BluRay.mkv",
+            "quality": "Bluray-1080p", "custom_formats": '["HDR", "DV"]',
+            "quality_profile": "HD-1080p Remux",
+        },
+        {
+            "ts": (now - timedelta(minutes=18)).strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "SONARR", "status": "ok", "error": "", "duration_s": 4.1,
+            "path": "/media/tv/The Bear (2022)/Season 3/",
+            "episode": '["The.Bear.S03E01.Napkins.1080p.WEB-DL.mkv","The.Bear.S03E02.Bolognese.1080p.WEB-DL.mkv","The.Bear.S03E03.Doors.And.Windows.1080p.WEB-DL.mkv"]',
+            "quality": "WEB-DL-1080p", "custom_formats": '["HLG"]',
+            "quality_profile": "WEB-1080p",
+        },
+        {
+            "ts": (now - timedelta(hours=1, minutes=5)).strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "RADARR", "status": "ok", "error": "", "duration_s": 5.7,
+            "path": "/media/movies/Dune Part Two (2024)/",
+            "episode": "", "quality": "Bluray-2160p",
+            "custom_formats": '["HDR10+", "DV", "Remux"]',
+            "quality_profile": "UHD Remux",
+        },
+        {
+            "ts": (now - timedelta(hours=2, minutes=32)).strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "SONARR", "status": "ok", "error": "", "duration_s": 2.8,
+            "path": "/media/tv/Severance (2022)/Season 2/",
+            "episode": "Severance.S02E04.Woes.Hollow.1080p.ATVP.WEB-DL.mkv",
+            "quality": "WEB-DL-1080p", "custom_formats": '["ATMOS"]',
+            "quality_profile": "WEB-1080p",
+        },
+        {
+            "ts": (now - timedelta(hours=4, minutes=17)).strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "RADARR", "status": "error",
+            "error": "ReadTimeout: Plex did not respond within 60s",
+            "duration_s": 60.0,
+            "path": "/media/movies/Avatar The Way of Water (2022)/",
+            "episode": "", "quality": "Bluray-2160p",
+            "custom_formats": '["HDR10", "DV"]', "quality_profile": "UHD Remux",
+        },
+        {
+            "ts": (now - timedelta(hours=6, minutes=44)).strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "SONARR", "status": "ok", "error": "", "duration_s": 3.5,
+            "path": "/media/tv/Shogun (2024)/Season 1/",
+            "episode": "Shogun.S01E05.Crimson.Sky.1080p.DSNP.WEB-DL.mkv",
+            "quality": "WEB-DL-1080p", "custom_formats": '[]',
+            "quality_profile": "WEB-1080p",
+        },
+        {
+            "ts": (now - timedelta(hours=9, minutes=11)).strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "RADARR", "status": "ok", "error": "", "duration_s": 4.3,
+            "path": "/media/movies/Oppenheimer (2023)/",
+            "episode": "", "quality": "Bluray-1080p",
+            "custom_formats": '["ATMOS", "TrueHD"]', "quality_profile": "HD-1080p Remux",
+        },
+        {
+            "ts": (now - timedelta(hours=11, minutes=58)).strftime("%Y-%m-%dT%H:%M:%S"),
+            "label": "MANUAL", "status": "ok", "error": "", "duration_s": 2.1,
+            "path": "/media/tv/The Last of Us (2023)/Season 1/",
+            "episode": "The.Last.of.Us.S01E01.When.Youre.Lost.in.the.Darkness.1080p.WEB-DL.mkv",
+            "quality": "WEB-DL-1080p", "custom_formats": '[]', "quality_profile": "",
+        },
+    ]
+    for item in raw:
+        display, ep_list = _parse_episode_field(item.get('episode', ''))
+        item['episode_display'] = display
+        item['episode_list'] = ep_list
+        cf_raw = item.get('custom_formats', '') or ''
+        try:
+            item['custom_format_list'] = json.loads(cf_raw) if cf_raw else []
+        except (json.JSONDecodeError, ValueError):
+            item['custom_format_list'] = []
+    return raw
+
+
+def _plex_sessions_live() -> list:
+    """Fetch current Plex sessions and return a normalised list of dicts."""
+    plex = get_plex()
+    if not plex:
+        return []
+
+    def _ms(ms: int) -> str:
+        ms = ms or 0
+        total_s = ms // 1000
+        h, rem = divmod(total_s, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    results = []
+    try:
+        for s in plex.sessions():
+            usernames = getattr(s, 'usernames', []) or []
+            user = usernames[0] if usernames else "Unknown"
+            media_type = getattr(s, 'type', 'unknown')
+            title = getattr(s, 'title', 'Unknown')
+            show = getattr(s, 'grandparentTitle', None) if media_type == 'episode' else None
+            view_offset = getattr(s, 'viewOffset', 0) or 0
+            duration = getattr(s, 'duration', 0) or 0
+            progress_pct = int(view_offset * 100 / duration) if duration else 0
+            player = getattr(s, 'player', None)
+            player_name = player.title if player else 'Unknown'
+            state = player.state if player else 'playing'
+            quality = ""
+            if getattr(s, 'media', None):
+                res = getattr(s.media[0], 'videoResolution', '') or ''
+                quality = (res + 'p') if res.isdigit() else res
+            transcode = bool(getattr(s, 'transcodeSessions', None))
+            stream_type = "Transcode" if transcode else "Direct Play"
+            ep_str = None
+            if media_type == 'episode':
+                si, ei = getattr(s, 'parentIndex', None), getattr(s, 'index', None)
+                if si is not None and ei is not None:
+                    ep_str = f"S{int(si):02d} · E{int(ei):02d}"
+            results.append({
+                "user": user, "title": title, "show": show, "episode": ep_str,
+                "type": media_type, "player": player_name, "state": state,
+                "progress_pct": progress_pct,
+                "duration_str": _ms(duration) if duration else "--",
+                "position_str": _ms(view_offset),
+                "quality": quality, "stream_type": stream_type, "transcode": transcode,
+            })
+    except Exception as exc:
+        log.warning("Failed to fetch Plex sessions: %s", exc)
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -1104,6 +1276,16 @@ def login():
             return redirect(url_for('manual_webhook'))
         error = "Invalid username or password."
     return render_template('login.html', error=error)
+
+
+@app.route('/login/demo')
+def login_demo():
+    if not DEMO_MODE:
+        return redirect(url_for('login'))
+    session.permanent = False
+    session['authenticated'] = True
+    session['demo'] = True
+    return redirect(url_for('manual_webhook'))
 
 
 @app.route('/logout')
@@ -1149,12 +1331,17 @@ def manual_webhook():
     per_page = 25
     offset = (page - 1) * per_page
 
-    recent = history.get_recent(limit=per_page, offset=offset, search=search_q,
-                                status_filter=status_filter, quality_filter=quality_filter,
-                                profile_filter=profile_filter)
-    total_count = history.count(search=search_q, status_filter=status_filter,
-                                quality_filter=quality_filter, profile_filter=profile_filter)
-    total_pages = (total_count + per_page - 1) // per_page
+    if session.get('demo'):
+        recent = _demo_history()
+        total_count = len(recent)
+        total_pages = 1
+    else:
+        recent = history.get_recent(limit=per_page, offset=offset, search=search_q,
+                                    status_filter=status_filter, quality_filter=quality_filter,
+                                    profile_filter=profile_filter)
+        total_count = history.count(search=search_q, status_filter=status_filter,
+                                    quality_filter=quality_filter, profile_filter=profile_filter)
+        total_pages = (total_count + per_page - 1) // per_page
 
     for item in recent:
         display, ep_list = _parse_episode_field(item.get('episode', ''))
@@ -1195,7 +1382,25 @@ def manual_webhook():
         filter_qs=filter_qs,
         no_quality_qs=no_quality_qs,
         no_profile_qs=no_profile_qs,
+        demo=session.get('demo', False),
     )
+
+
+@app.route('/now-playing')
+@requires_auth
+def now_playing():
+    demo = session.get('demo', False)
+    sessions = _DEMO_SESSIONS if demo else _plex_sessions_live()
+    return render_template('now_playing.html', sessions=sessions, demo=demo)
+
+
+@app.route('/invite')
+@requires_auth
+def invite():
+    demo = session.get('demo', False)
+    users = _DEMO_INVITE_USERS if demo else []
+    return render_template('invite.html', demo=demo, users=users,
+                           wiki_url=ONBOARD_WIKI_URL, request_url=ONBOARD_REQUEST_URL)
 
 
 @app.route('/health', methods=['GET'])

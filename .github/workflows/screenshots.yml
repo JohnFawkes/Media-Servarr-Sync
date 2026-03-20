@@ -30,11 +30,12 @@ jobs:
         run: |
           docker run -d -p 5000:5000 --name app \
             -e SECRET_KEY=screenshot-run-secret \
-            -e MANUAL_USER=admin \
-            -e MANUAL_PASS=password \
             -e PLEX_URL=http://127.0.0.1:32400 \
             -e PLEX_TOKEN=fake-token-for-screenshots \
             -e SECTION_MAPPING='{"/":" 1"}' \
+            -e DEMO_MODE=true \
+            -e ONBOARD_WIKI_URL=https://example.com/wiki \
+            -e ONBOARD_REQUEST_URL=https://example.com/requests \
             media-servarr-sync:screenshot
 
       - name: Wait for app to be ready
@@ -65,27 +66,36 @@ jobs:
 
           BASE = "http://localhost:5000"
 
+          PAGES = [
+              ("login",       "/login"),
+              ("webui",       "/"),
+              ("now-playing", "/now-playing"),
+              ("invite",      "/invite"),
+          ]
+
           async def main():
               async with async_playwright() as p:
                   browser = await p.chromium.launch()
                   ctx = await browser.new_context(viewport={"width": 1280, "height": 900})
                   page = await ctx.new_page()
 
-                  # Screenshot the login page
+                  # Screenshot the login page before logging in
                   await page.goto(f"{BASE}/login")
                   await page.wait_for_load_state("networkidle")
                   await page.screenshot(path="screenshot-login.png", full_page=True)
                   print("Saved screenshot-login.png")
 
-                  # Log in
-                  await page.fill('input[name="username"]', 'admin')
-                  await page.fill('input[name="password"]', 'password')
-                  await page.click('button[type="submit"]')
+                  # Log in via the demo route (no password needed)
+                  await page.goto(f"{BASE}/login/demo")
                   await page.wait_for_load_state("networkidle")
 
-                  # Screenshot the main web UI
-                  await page.screenshot(path="screenshot-webui.png", full_page=True)
-                  print("Saved screenshot-webui.png")
+                  # Screenshot remaining pages
+                  for name, path in PAGES[1:]:
+                      await page.goto(f"{BASE}{path}")
+                      await page.wait_for_load_state("networkidle")
+                      out = f"screenshot-{name}.png"
+                      await page.screenshot(path=out, full_page=True)
+                      print(f"Saved {out}")
 
                   await browser.close()
 
@@ -95,8 +105,10 @@ jobs:
       - name: Commit screenshots to repo
         run: |
           mkdir -p screenshots
-          cp screenshot-login.png screenshots/login.png
-          cp screenshot-webui.png screenshots/webui.png
+          cp screenshot-login.png      screenshots/login.png
+          cp screenshot-webui.png      screenshots/webui.png
+          cp screenshot-now-playing.png screenshots/now-playing.png
+          cp screenshot-invite.png     screenshots/invite.png
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add screenshots/
