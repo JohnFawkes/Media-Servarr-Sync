@@ -41,15 +41,17 @@ jobs:
       - name: Wait for app to be ready
         run: |
           echo "Waiting for app..."
-          for i in {1..15}; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health)
+          sleep 3
+          for i in {1..20}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health 2>/dev/null || echo "000")
             if [ "$CODE" = "200" ] || [ "$CODE" = "207" ]; then
               echo "App is ready (HTTP $CODE)."
               exit 0
             fi
             echo "Attempt $i: HTTP $CODE, retrying..."
-            sleep 2
+            sleep 3
           done
+          echo "=== Container logs ==="
           docker logs app
           exit 1
 
