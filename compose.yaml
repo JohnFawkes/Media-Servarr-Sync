@@ -1,7 +1,6 @@
 services:
   media-servarr-sync:
-#    image: ghcr.io/johnfawkes/media-servarr-sync:latest
-    image: ghcr.io/johnfawkes/media-servarr-sync:pr-73
+    image: ghcr.io/johnfawkes/media-servarr-sync:latest
     container_name: media-servarr-sync
     restart: unless-stopped
     env_file:
