@@ -44,6 +44,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0 # CHANGED: Required for version calculation history
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # NEW: Bump version and push tag (Only on push to main)
       - name: Bump version and push tag
@@ -202,7 +203,6 @@ jobs:
           EOF
 
       - name: Commit screenshots to repo
-        if: github.event_name == 'push'
         run: |
           mkdir -p screenshots
           cp screenshot-login.png   screenshots/login.png
@@ -213,7 +213,7 @@ jobs:
           git add screenshots/
           git diff --staged --quiet && echo "No changes to screenshots." || \
             git commit -m "chore: update demo screenshots [skip ci]" && \
-            git push origin HEAD:${{ github.ref_name }}
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
 
       - name: Upload screenshots as artifact
         uses: actions/upload-artifact@v4
