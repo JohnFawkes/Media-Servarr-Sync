@@ -1016,6 +1016,16 @@ def _extract_file_meta(file_obj: dict) -> tuple:
     return quality, []
 
 
+def _merge_qualities(existing: str, incoming: str) -> str:
+    """Union two ' / '-separated quality strings, preserving order."""
+    seen = []
+    for q in (existing or '').split(' / ') + (incoming or '').split(' / '):
+        q = q.strip()
+        if q and q not in seen:
+            seen.append(q)
+    return ' / '.join(seen)
+
+
 def _merge_custom_formats(existing: str, incoming: str) -> str:
     """Union two JSON-encoded custom-format name lists, preserving order."""
     def _to_list(s: str) -> list:
@@ -1084,9 +1094,10 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
                          label, mapped_folder, merged)
             else:
                 log.info("[%s] [DEDUP] Already queued: %s", label, mapped_folder)
-            # Quality / profile: keep first non-empty value
-            if not existing_task.quality and quality:
-                existing_task.quality = quality
+            # Quality: union all distinct values across deduplicated events
+            if quality:
+                existing_task.quality = _merge_qualities(existing_task.quality, quality)
+            # Profile: keep first non-empty value (profile is per-series, not per-file)
             if not existing_task.quality_profile and quality_profile:
                 existing_task.quality_profile = quality_profile
             # Custom formats: union
