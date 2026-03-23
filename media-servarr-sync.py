@@ -1194,9 +1194,14 @@ def process_webhook(data: dict, instance_type: str):
                     f.get('relativePath', '').replace('\\', '/').split('/')[-1]
                     for f in efs if f.get('relativePath')
                 ]
-                # Quality from first file (custom formats come from top-level payload)
+                # Collect unique qualities across all files
                 if efs:
-                    quality, _ = _extract_file_meta(efs[0])
+                    _quals = []
+                    for _f in efs:
+                        _q, _ = _extract_file_meta(_f)
+                        if _q and _q not in _quals:
+                            _quals.append(_q)
+                    quality = " / ".join(_quals)
 
         if not episode_files:
             refs = data.get('renamedEpisodeFiles', [])
@@ -1206,7 +1211,12 @@ def process_webhook(data: dict, instance_type: str):
                     for f in refs if f.get('relativePath')
                 ]
                 if refs:
-                    quality, _ = _extract_file_meta(refs[0])
+                    _quals = []
+                    for _f in refs:
+                        _q, _ = _extract_file_meta(_f)
+                        if _q and _q not in _quals:
+                            _quals.append(_q)
+                    quality = " / ".join(_quals)
 
         if len(episode_files) == 1:
             episode = episode_files[0]
