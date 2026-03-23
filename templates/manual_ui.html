@@ -981,7 +981,7 @@ function jumpPage(form, maxPage) {
       var remaining = fmtMs((s.duration_ms || 0) - (s.view_offset_ms || 0));
       var sClass    = stateClass(s.state);
       var sLabel    = stateLabel(s.state);
-      var ip        = s.player_address || s.player_remote_address || '';
+      var ip        = s.player_remote_address || s.player_address || '';
       // Sanitize session_id to alphanumeric so it is safe in HTML id/attribute contexts
       var safeId = String(s.session_id).replace(/[^a-zA-Z0-9_-]/g, '');
       var mapId  = 'np-map-' + safeId;
@@ -1046,7 +1046,7 @@ function jumpPage(form, maxPage) {
 
     // Geo lookup + map init for each session
     sessions.forEach(function(s) {
-      var ip     = s.player_address || s.player_remote_address || '';
+      var ip     = s.player_remote_address || s.player_address || '';
       var safeId = String(s.session_id).replace(/[^a-zA-Z0-9_-]/g, '');
       if (ip) initGeo(safeId, ip);
     });
