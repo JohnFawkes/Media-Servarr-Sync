@@ -1624,7 +1624,7 @@ def now_playing():
                     })
         except Exception as exc:
             log.warning("Failed to fetch Plex sessions for /now-playing: %s", exc)
-    return render_template('now_playing.html', sessions=sessions, demo=demo)
+    return render_template('now_playing.html', sessions=sessions, demo=demo, plex_url=PLEX_URL)
 
 
 @app.route('/health', methods=['GET'])
