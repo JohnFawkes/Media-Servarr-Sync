@@ -1908,7 +1908,7 @@ def api_scan_library():
         return jsonify({'status': 'ok', 'library': library.title})
     except Exception as exc:
         log.error("[MANUAL] Full scan error for section %s: %s", section_id, exc)
-        return jsonify({'error': str(exc)}), 500
+        return jsonify({'error': 'Failed to trigger full scan'}), 500
 
 
 @app.route('/api/libraries')
@@ -1928,7 +1928,8 @@ def api_libraries():
                 for s in plex_instance.library.sections()]
         return jsonify({'libraries': libs})
     except Exception as exc:
-        return jsonify({'error': str(exc), 'libraries': []}), 500
+        log.error("[LIBRARIES] Failed to fetch Plex library sections: %s", exc)
+        return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 500
 
 
 @app.route('/api/geoip')

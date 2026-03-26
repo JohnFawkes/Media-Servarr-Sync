@@ -863,6 +863,12 @@
         document.title = doc.title || document.title;
         history.pushState({pjax: url}, '', url);
         window.scrollTo(0, 0);
+        /* show sync-only chrome only on the root Sync tab */
+        var onSync = newPath === '/';
+        var btt = document.getElementById('back-to-top');
+        var leg = document.querySelector('.legend');
+        if (btt) btt.style.display = onSync ? '' : 'none';
+        if (leg) leg.style.display = onSync ? '' : 'none';
         var init = doc.getElementById('page-init');
         if (init) {
           var s = document.createElement('script');
