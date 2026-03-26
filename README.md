@@ -30,8 +30,12 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Episode display** — for Sonarr events, the episode filename (e.g. `Show.S01E01.mkv`) is shown beneath the season folder path; batch imports show an episode-count badge that reveals all individual filenames on hover (filenames wrap fully, no truncation)
 - **Quality & profile tags** — each history entry displays colour-coded tags for the file quality (blue), quality profile (green, resolved via the Sonarr/Radarr API), and any custom formats (purple); hover a tag to see its label
 - **Filterable tags** — click any quality or profile tag to filter the history list to matching entries; active filters appear as dismissible pills in the filter bar and are preserved across search and pagination
-- **Tag colour legend** — a fixed panel on the left of the UI explains what each tag colour means (green = Quality Profile, blue = Quality, purple = Custom Format); hidden automatically on narrow viewports
+- **Tag colour legend** — a fixed panel on the left of the Sync UI explains what each tag colour means; hidden automatically on narrow viewports
 - **Auto-refresh** — sync history refreshes automatically every 30 seconds with a live countdown; a manual `↻` button triggers an immediate refresh
+- **Now Playing** — dedicated tab showing all active Plex streams with player info, artwork, progress bar, stream quality, and an interactive map showing the player's approximate location
+- **Full library scan** — trigger a full Plex section scan from the Now Playing page via a library selector dropdown
+- **Invite management** — create time-limited invite links for new Plex users; configure allowed libraries, permissions, max uses, and expiry; track and revoke accepted invites
+- **Single-page navigation** — tab switching uses PJAX (in-place content swap) with no full page reload
 
 ---
 
@@ -171,7 +175,10 @@ SECTION_MAPPING={ "/mnt/media/tv": "1", "/mnt/media/movies": "2" }
 |---|---|---|---|
 | `/webhook/sonarr` | POST | None | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | None | Radarr webhook receiver |
-| `/` | GET / POST | Session | Manual sync trigger UI + history |
+| `/` | GET / POST | Session | Sync tab — manual trigger + history |
+| `/now-playing` | GET | Session | Now Playing tab — active Plex streams |
+| `/invites` | GET | Session | Invite management tab |
+| `/invite/<token>` | GET | None | Public invite landing page |
 | `/health` | GET | None | JSON health check + recent history |
 | `/api/stats` | GET | None | Aggregate sync stats for dashboards |
 

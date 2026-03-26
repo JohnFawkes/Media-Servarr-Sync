@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [v0.11.0] - 2026-03-26
+
+### Added
+- **PJAX single-page navigation** — clicking nav tabs (Sync, Now Playing, Invites) swaps only `#page-content` and `#page-style` without a full page reload, preserving scroll position and avoiding flash-of-unstyled-content between tabs.
+- **Now Playing page** (`/now-playing`) — dedicated page showing all active Plex streams with player info, media thumbnail, progress bar, stream quality, and an interactive Leaflet map showing the player's approximate geolocation. Local-network IPs show a "Local Network" indicator instead of a map.
+- **Full library scan from Now Playing UI** — a library selector on the Now Playing page lets you trigger a full Plex section scan directly from the UI without navigating away.
+- **Invite management** (`/invites`) — create and manage time-limited Plex invite links; configure allowed library sections, sync/channels permissions, home-user flag, max uses, and link/access expiry. Invite acceptance flow at `/invite/<token>` walks the user through confirming their Plex username.
+
+### Fixed
+- **Tab-aware chrome** — the tag legend and back-to-top button are now shown only on the Sync tab. When navigating to a non-Sync tab they are hidden; when navigating back to Sync from a page that never had them in the DOM they are injected from the fetched HTML.
+- **Auto-refresh preserved across tab switches** — PJAX navigation now properly cleans up and re-initialises page timers so the sync history countdown and Now Playing poll continue after switching tabs.
+
+### Security
+- **Information exposure through exception (CodeQL)** — two API endpoints (`/api/scan/library`, `/api/libraries`) previously returned raw `str(exc)` in JSON error responses, leaking internal Plex details. Errors are now logged server-side and a generic message is returned to the client.
+- **NaN injection / boolean coercion (semgrep)** — invite creation form fields (`allow_sync`, `allow_channels`, `home_user`) now use `'field' in request.form` instead of `bool(request.form.get('field'))`, preventing a non-empty string like `"false"` from being coerced to `True`.
+- **CSRF false positive suppression (semgrep)** — `invite_onboard.html` form action switched to `url_for()` and annotated with `nosemgrep: django-no-csrf-token`; Flask-WTF `CSRFProtect` is active globally and the token is present on the very next line.
+
+### Changed
+- Dependency update: `requests` → v2.33.0.
+- CI: `sigstore/cosign-installer` action updated to v4.1.1.
+
+---
+
 ## [v0.10.0] - 2026-03-18
 
 ### Added

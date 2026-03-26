@@ -46,7 +46,10 @@ compose.yaml            Docker Compose config
 .env.example            Environment variable template
 templates/
   login.html            Login page
-  manual_ui.html        Web UI: manual trigger + sync history
+  manual_ui.html        Outer shell (header, PJAX script, nav); also serves the Sync tab page-content
+  now_playing.html      Now Playing page (active Plex streams, geolocation maps, library scan)
+  invites.html          Invite management page (create / revoke invite links and grants)
+  invite_onboard.html   Public invite acceptance flow (/invite/<token> and /invite/<token>/accept)
 ```
 
 ## Key Internals
@@ -56,18 +59,32 @@ templates/
 - **Background worker** (`sync_worker`) — drains the queue with configurable `WEBHOOK_DELAY`
 - **Deduplication** — duplicate webhooks for the same folder are merged while a task is in-flight
 - **Quality/custom format caching** — fetched from Sonarr/Radarr API, refreshed every 6 hours
+- **PJAX navigation** — nav-link clicks swap only `#page-content` and `#page-style` in-place; `manual_ui.html` is the persistent outer shell and all other page templates supply only their inner content block. Cleanup callbacks registered as `window.__pjaxCleanup` are called before each swap.
+- **Sync-tab-only chrome** — the tag legend (`.legend`) and back-to-top button (`#back-to-top`) are only relevant on the Sync tab; the PJAX handler hides them on navigation away and re-injects them from the fetched HTML when returning to `/` if they were never in the DOM.
 
 ### Flask Routes
 
-| Route | Method | Purpose |
-|---|---|---|
-| `/webhook/sonarr` | POST | Sonarr webhook receiver |
-| `/webhook/radarr` | POST | Radarr webhook receiver |
-| `/` | GET/POST | Manual scan UI (login required) |
-| `/login` | GET/POST | Login page |
-| `/logout` | GET | Logout |
-| `/health` | GET | Health check (Plex, rclone, queue depth) |
-| `/api/stats` | GET | Stats API (for Homepage widget) |
+| Route | Method | Auth | Purpose |
+|---|---|---|---|
+| `/webhook/sonarr` | POST | none (CSRF exempt) | Sonarr webhook receiver |
+| `/webhook/radarr` | POST | none (CSRF exempt) | Radarr webhook receiver |
+| `/` | GET/POST | session | Sync tab — manual scan UI + history |
+| `/now-playing` | GET | session | Now Playing tab — active Plex streams |
+| `/invites` | GET | session | Invite management tab |
+| `/invites/create` | POST | session | Create a new invite link |
+| `/invites/revoke/<token>` | POST | session | Revoke an invite link |
+| `/invites/revoke_grant/<id>` | POST | session | Revoke an accepted grant |
+| `/invite/<token>` | GET | none | Public invite landing page |
+| `/invite/<token>/accept` | POST | none | Accept an invite (adds Plex friend) |
+| `/login` | GET/POST | — | Login page |
+| `/logout` | GET | session | Logout |
+| `/health` | GET | none | Health check (Plex, rclone, queue depth) |
+| `/api/stats` | GET | none | Aggregate stats (Homepage widget) |
+| `/api/sessions` | GET | session | Raw Plex session data for Now Playing |
+| `/api/scan/library` | POST | session (CSRF exempt) | Trigger a full Plex library section scan |
+| `/api/libraries` | GET | session | List Plex library sections |
+| `/api/geoip` | GET | session | Server-side IP geolocation proxy (cached) |
+| `/api/thumb` | GET | session | Proxy Plex artwork thumbnails |
 
 ## Skipped Webhook Events
 
