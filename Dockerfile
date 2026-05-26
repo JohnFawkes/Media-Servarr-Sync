@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir --upgrade pip>=26.0 \
 # ── App source ────────────────────────────────────────────────────────────────
 COPY media-servarr-sync.py .
 COPY templates/ templates/
+COPY static/ static/
 
 # Create data directory for persistent storage
 RUN mkdir -p /data && chown appuser:appuser /data
