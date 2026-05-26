@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Background -->
+  <rect width="512" height="512" rx="80" fill="#0d0d0f"/>
+  <!-- Sync / refresh arc -->
+  <path stroke="#e5a00d" stroke-width="44" stroke-linecap="round" fill="none"
+        d="M416 256a160 160 0 1 1-32-96"/>
+  <!-- Arrowhead at top of arc -->
+  <polyline stroke="#e5a00d" stroke-width="44" stroke-linecap="round"
+            stroke-linejoin="round" fill="none"
+            points="416,96 416,176 336,176"/>
+</svg>

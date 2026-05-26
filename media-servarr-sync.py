@@ -2226,6 +2226,57 @@ def accept_invite(token):
 
 
 # ---------------------------------------------------------------------------
+# PWA – manifest + service worker (served at root scope)
+# ---------------------------------------------------------------------------
+
+@app.route('/manifest.json')
+def pwa_manifest():
+    """Return the PWA web app manifest."""
+    manifest = {
+        "name": "Media Servarr Sync",
+        "short_name": "ServarrSync",
+        "description": "Sonarr/Radarr → Plex webhook sync dashboard",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0d0d0f",
+        "theme_color": "#e5a00d",
+        "icons": [
+            {
+                "src": "/static/icon.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any"
+            },
+            {
+                "src": "/static/icon.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "maskable"
+            }
+        ]
+    }
+    resp = jsonify(manifest)
+    resp.headers['Content-Type'] = 'application/manifest+json'
+    return resp
+
+
+@app.route('/sw.js')
+def service_worker():
+    """Serve the PWA service worker at root scope (required for full-origin control)."""
+    js = """\
+// Media Servarr Sync – minimal service worker for PWA installability
+// Network-only: no caching so real-time data (webhooks, now-playing) is always fresh.
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(clients.claim()));
+self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));
+"""
+    resp = make_response(js)
+    resp.headers['Content-Type'] = 'application/javascript'
+    resp.headers['Service-Worker-Allowed'] = '/'
+    return resp
+
+
+# ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
 
