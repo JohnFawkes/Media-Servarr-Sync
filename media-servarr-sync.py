@@ -1943,7 +1943,8 @@ def api_geoip():
         safe_ip = str(ipaddress.ip_address(ip))
     except ValueError:
         return jsonify({'error': 'invalid ip'}), 400
-    if ipaddress.ip_address(safe_ip).is_private:
+    addr = ipaddress.ip_address(safe_ip)
+    if not addr.is_global:
         return jsonify({'private': True, 'ip': safe_ip})
     now = time.time()
     with _geo_cache_lock:
@@ -1958,10 +1959,8 @@ def api_geoip():
                 out.pop('_ts', None)
                 return jsonify(_sanitize_floats(out))
     try:
-        r = requests.get(
-            'https://ipinfo.io/' + safe_ip + '/json',
-            timeout=5,
-        )
+        url = urllib.parse.urljoin('https://ipinfo.io/', urllib.parse.quote(safe_ip, safe='') + '/json')
+        r = requests.get(url, timeout=5)
         raw = r.json()
         # Normalize ipinfo.io response to ip-api.com field names expected by the frontend
         lat, lon = None, None
