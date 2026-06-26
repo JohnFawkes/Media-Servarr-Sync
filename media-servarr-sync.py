@@ -1648,7 +1648,6 @@ def health():
         "rclone_enabled": USE_RCLONE,
         "queue_depth": sync_queue.qsize(),
         "worker_alive": _worker_alive.is_set(),
-        "recent_history": history.as_list()[:10],
     }), 200 if plex_ok else 207
 
 
