@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Per-episode quality and format tags in sync history** — when multiple episodes for the same show folder are deduplicated into one sync entry, each file now shows its own quality and custom-format badges beneath its filename. Differences between files (e.g. dual-audio vs Japanese-only, different quality tiers) are immediately visible rather than being merged into a single flat tag row. Older history records continue to render as before.
+
+---
+
 ## [v0.18.0] - 2026-06-27
 
 ### Fixed
