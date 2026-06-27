@@ -99,6 +99,15 @@ jobs:
               patch += 1
 
           new_version = f"v{major}.{minor}.{patch}"
+
+          # Guard: if this version already exists in the CHANGELOG, a previous
+          # promote already ran (e.g. an earlier push or workflow_dispatch stamped it).
+          # Stamping again would create a duplicate entry, so bail out instead.
+          all_versions = re.findall(r'^## \[v[\d.]+\]', "".join(lines), re.MULTILINE)
+          if any(new_version in v for v in all_versions):
+              print(f"Version {new_version} already exists in CHANGELOG — skipping promote to avoid duplicate.")
+              sys.exit(0)
+
           today = datetime.date.today().strftime("%Y-%m-%d")
           lines[unrel_idx] = f"## [{new_version}] - {today}\n"
 
