@@ -352,6 +352,9 @@
   }
   .interval-input:hover, .interval-input:focus { border-color: var(--accent); color: var(--text); }
 
+  .ep-file-row { margin-top: 4px; }
+  .ep-file-row + .ep-file-row { margin-top: 6px; }
+  .ep-file-row .tag-row { margin-top: 2px; }
   .tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .tag {
     display: inline-block; padding: 1px 6px;
@@ -764,7 +767,31 @@
         <div class="status-dot {{ 'dot-ok' if h.status == 'ok' else 'dot-error' }}"></div>
         <div>
           <span class="h-path">{{ h.path }}</span>
-          {% if h.episode_display %}
+          {% if h.episode_rich and h.episode_list %}
+            {# Per-episode rich view: each file gets its own filename + quality/format tags #}
+            {% if h.quality_profile %}
+            <div class="tag-row" style="margin-top:3px">
+              <a href="?{{ no_profile_qs | safe }}&profile={{ h.quality_profile | urlencode }}&page=1"
+                 class="tag tag-qp{{ ' tag-active' if profile_filter == h.quality_profile else '' }}"
+                 data-tip="Profile">{{ h.quality_profile }}</a>
+            </div>
+            {% endif %}
+            {% for ep in h.episode_list %}
+            <div class="ep-file-row">
+              <div class="h-episode">{{ ep.f }}</div>
+              {% if ep.q or ep.cf %}
+              <div class="tag-row">
+                {% if ep.q %}
+                <a href="?{{ no_quality_qs | safe }}&quality={{ ep.q | urlencode }}&page=1"
+                   class="tag tag-quality{{ ' tag-active' if quality_filter == ep.q else '' }}"
+                   data-tip="Quality">{{ ep.q }}</a>
+                {% endif %}
+                {% for cf in ep.cf %}<span class="tag tag-cf" data-tip="Format">{{ cf }}</span>{% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            {% endfor %}
+          {% elif h.episode_display %}
             {% if h.episode_list %}
             <div>
               <div class="ep-wrap">
@@ -782,21 +809,21 @@
               <div class="h-episode">{{ h.episode_display }}</div>
               {% endif %}
             {% endif %}
-          {% endif %}
-          {% if h.quality_profile or h.quality or h.custom_format_list %}
-          <div class="tag-row">
-            {% if h.quality_profile %}
-            <a href="?{{ no_profile_qs | safe }}&profile={{ h.quality_profile | urlencode }}&page=1"
-               class="tag tag-qp{{ ' tag-active' if profile_filter == h.quality_profile else '' }}"
-               data-tip="Profile">{{ h.quality_profile }}</a>
+            {% if h.quality_profile or h.quality or h.custom_format_list %}
+            <div class="tag-row">
+              {% if h.quality_profile %}
+              <a href="?{{ no_profile_qs | safe }}&profile={{ h.quality_profile | urlencode }}&page=1"
+                 class="tag tag-qp{{ ' tag-active' if profile_filter == h.quality_profile else '' }}"
+                 data-tip="Profile">{{ h.quality_profile }}</a>
+              {% endif %}
+              {% if h.quality %}
+              <a href="?{{ no_quality_qs | safe }}&quality={{ h.quality | urlencode }}&page=1"
+                 class="tag tag-quality{{ ' tag-active' if quality_filter == h.quality else '' }}"
+                 data-tip="Quality">{{ h.quality }}</a>
+              {% endif %}
+              {% for cf in h.custom_format_list %}<span class="tag tag-cf" data-tip="Format">{{ cf }}</span>{% endfor %}
+            </div>
             {% endif %}
-            {% if h.quality %}
-            <a href="?{{ no_quality_qs | safe }}&quality={{ h.quality | urlencode }}&page=1"
-               class="tag tag-quality{{ ' tag-active' if quality_filter == h.quality else '' }}"
-               data-tip="Quality">{{ h.quality }}</a>
-            {% endif %}
-            {% for cf in h.custom_format_list %}<span class="tag tag-cf" data-tip="Format">{{ cf }}</span>{% endfor %}
-          </div>
           {% endif %}
           <div class="h-label">{{ h.label }} &nbsp;·&nbsp; {{ h.duration_s }}s</div>
           {% if h.error %}<div class="h-error">{{ h.error }}</div>{% endif %}
