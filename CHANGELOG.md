@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Per-episode tags now render for batch downloads** — when Sonarr sends a single webhook with multiple files in `episodeFiles` or `renamedEpisodeFiles`, each file's quality is now stored individually in the rich episode object rather than being merged into a flat tag row. Custom formats from the same release are shared across all files in the batch.
+
+---
+
 ## [v0.20.0] - 2026-06-27
 
 ### Added
