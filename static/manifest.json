@@ -1,0 +1,23 @@
+{
+  "name": "Media Servarr Sync",
+  "short_name": "ServarrSync",
+  "description": "Sonarr/Radarr → Plex webhook sync dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d0d0f",
+  "theme_color": "#e5a00d",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

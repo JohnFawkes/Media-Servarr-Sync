@@ -2226,35 +2226,6 @@ def accept_invite(token):
 # PWA – manifest + service worker (served at root scope)
 # ---------------------------------------------------------------------------
 
-@app.route('/manifest.json')
-def pwa_manifest():
-    """Return the PWA web app manifest."""
-    manifest = {
-        "name": "Media Servarr Sync",
-        "short_name": "ServarrSync",
-        "description": "Sonarr/Radarr → Plex webhook sync dashboard",
-        "start_url": "/",
-        "display": "standalone",
-        "background_color": "#0d0d0f",
-        "theme_color": "#e5a00d",
-        "icons": [
-            {
-                "src": "/static/icon.svg",
-                "sizes": "any",
-                "type": "image/svg+xml",
-                "purpose": "any"
-            },
-            {
-                "src": "/static/icon.svg",
-                "sizes": "any",
-                "type": "image/svg+xml",
-                "purpose": "maskable"
-            }
-        ]
-    }
-    resp = jsonify(manifest)
-    resp.headers['Content-Type'] = 'application/manifest+json'
-    return resp
 
 
 @app.route('/sw.js')
