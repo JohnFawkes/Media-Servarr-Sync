@@ -104,17 +104,19 @@ pip install -r requirements.txt
 
 ## Git Workflow
 
+**Base branch: `dev`** — all changes must be branched off `dev` and PRs target `dev`. Never branch off or PR directly to `master`.
+
 Before making any changes, always:
 
 1. Check if the current working branch (if one exists from a previous session) has any open PRs
    - If it has open PRs, continue making changes on that branch (do not delete it)
-   - If it has no open PRs, delete it and create a fresh branch based off `master`
-2. Create a fresh branch based off `master` (only if the old branch was deleted)
+   - If it has no open PRs, delete it and create a fresh branch based off `dev`
+2. Create a fresh branch based off `dev` (only if the old branch was deleted)
 3. Then make your changes on the new branch
 
 ```bash
-git checkout master
-git pull origin master
+git checkout dev
+git pull origin dev
 
 # Check for open PRs before deleting the old branch
 gh pr list --head <old-branch> --state open
@@ -125,7 +127,7 @@ git checkout -b claude/<feature-name>
 git checkout <old-branch>    # continue working on the existing branch
 ```
 
-This ensures changes are always based on the latest master and avoids stale branch state, while preserving branches that have open PRs under review.
+This ensures changes are always based on the latest `dev` and avoids stale branch state, while preserving branches that have open PRs under review.
 
 ## No Tests
 
