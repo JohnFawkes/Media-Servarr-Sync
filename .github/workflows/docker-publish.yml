@@ -133,7 +133,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.changelog_reader.outputs.changes }}
-          token: ${{ secrets.PAT }}
+          token: ${{ secrets.PAT || github.token }}
           tag_name: ${{ steps.promote.outputs.VERSION }}
 
       # FIX: Force the image name to lowercase to avoid Docker registry errors
