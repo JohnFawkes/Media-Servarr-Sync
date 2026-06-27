@@ -6,24 +6,302 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [v0.12.0] - 2026-06-27
+## [Unreleased]
 
 ### Added
-- **Configurable refresh intervals** — both the Now Playing card and the Sync history card now expose a number input (with up/down arrows) to set the auto-refresh interval. `0` enables live mode (1-second polling, shows `LIVE`), `-1` disables auto-refresh entirely (shows `OFF`), and any positive integer sets the interval in seconds with a live countdown. Settings persist across page loads and PJAX tab switches via `localStorage` (`servarr_np_interval` and `servarr_sync_interval`). The interval input also appears on the full `/now-playing` page and shares the same stored value as the mini dashboard widget.
+- **Configurable refresh intervals** — both the Now Playing card and the Sync history card now expose a number input to set the auto-refresh interval. `0` enables live mode (1-second polling, shows `LIVE`), `-1` disables auto-refresh entirely (shows `OFF`), and any positive integer sets the interval in seconds with a live countdown. Settings persist across page loads and PJAX tab switches via `localStorage` (`servarr_np_interval` and `servarr_sync_interval`). The interval input also appears on the full `/now-playing` page and shares the same stored value as the mini dashboard widget.
 
 ### Fixed
-- **Now Playing live mode flash** — in live mode (interval = 0) the entire session card was being torn down and rebuilt on every 1-second tick, causing the map, artwork, and geo to flash. The renderer now does a full rebuild only on first load; subsequent calls patch only the dynamic fields in-place (state badge, progress bar, percentage, time remaining, stream type/quality/bitrate) while leaving the map, poster, IP, and geo untouched. Applies to both the full `/now-playing` page and the mini dashboard widget.
-- **Back-to-top button flash on PJAX navigation** — navigating away from the Sync tab briefly rendered the `↑ Top` button in the page header before the PJAX CSS swap removed its styles. The PJAX handler now hides and strips the `.visible` class from `#back-to-top` *before* swapping the stylesheet, eliminating the flash.
+- **Now Playing live mode flash** — in live mode the entire session card was being torn down and rebuilt on every 1-second tick, causing the map, artwork, and geo to flash. The renderer now does a full rebuild only on first load; subsequent calls patch only the dynamic fields in-place (state badge, progress bar, percentage, time remaining, stream type/quality/bitrate) while leaving the map, poster, IP, and geo untouched. Applies to both the full `/now-playing` page and the mini dashboard widget.
 - **`invites.html` PJAX back-to-top leak** — the Invites page PJAX handler was missing the back-to-top hide step entirely; it now hides both `#back-to-top` and `.legend` unconditionally before navigating away.
-- **Invites form accessibility** — five browser-reported "No label associated with a form field" warnings on `/invites` resolved: group labels (Libraries, Permissions) converted from `<label>` to `<div class="field-group-label">` since they have no single associated input; Access Duration, Link Expires, and Max Uses fields received matching `for`/`id` pairs.
 - **Zero treated as disabled in refresh interval input** — typing `0` in a refresh interval input incorrectly mapped to `-1` (disabled) because `parseInt('0') || -1` evaluates `0` as falsy. Fixed by using `isNaN(v) ? -1 : v` so `0` correctly activates live mode.
-
-### Changed
-- **Self-hosted web fonts** — Google Fonts `@import` URLs replaced with locally served woff2 files (`/static/fonts/`) across all templates. Eliminates stylesheet load failures behind reverse proxies or bot-protection layers (e.g. Anubis) that block external CDN requests. IBM Plex Mono (400/500/600) and IBM Plex Sans (400/500) are served directly from the container with no external dependency.
 
 ### CI
 - **CHANGELOG-driven releases** — `docker-publish.yml` now promotes `[Unreleased]` to a versioned heading on merge to `dev` (minor bump if `### Added` present, patch otherwise), commits it back with `[skip ci]`, and feeds the result to `mindsers/changelog-reader-action` + `softprops/action-gh-release` so release notes come directly from the changelog.
 - **Renovate auto-changelog** — new `changelog-renovate.yml` workflow appends a `### Changed` bullet to `[Unreleased]` whenever a Renovate PR is merged to `dev`.
+
+---
+
+## [v0.17.0] - 2026-06-27
+
+### Added
+- **PR auto-labeling** — PRs touching Docker-related files are automatically labelled `docker`; labelled PRs trigger a Docker image build and post a comment with the image tag for testing.
+
+### Fixed
+- Back-to-top button flash on PJAX navigation — the PJAX handler now hides `#back-to-top` before swapping the stylesheet, eliminating the brief unstyled flash.
+- Self-hosted IBM Plex fonts — Google Fonts `@import` replaced with locally served woff2 files under `/static/fonts/`, eliminating load failures behind reverse proxies or bot-protection layers (e.g. Anubis).
+- Replace CDN Leaflet with local `/static/` bundle in `invites.html`.
+- Resolve label accessibility issues and remove unused Leaflet import from the Invites page.
+- Remove manifest link tags to stop Anubis-caused console spam.
+- Add `pull-requests: write` permission for the PR image-comment step in CI.
+
+---
+
+## [v0.16.3] - 2026-06-27
+
+### Fixed
+- Bundle Leaflet JS and CSS locally to fix blank map boxes on the Now Playing page.
+
+---
+
+## [v0.16.2] - 2026-06-27
+
+### Fixed
+- Restore correct `ipinfo.io` request URL — `urllib.parse.quote()` was percent-encoding dots in IPv4 addresses, breaking all geolocation lookups.
+
+---
+
+## [v0.16.1] - 2026-06-26
+
+### Fixed
+- Block all non-global IP addresses in `/api/geoip` (loopback, private, link-local, multicast) and construct the upstream URL safely to prevent SSRF.
+- Remove sync history from the unauthenticated `/health` endpoint to prevent path disclosure.
+
+### Changed
+- Dependency update: `actions/checkout` → v7.
+
+---
+
+## [v0.16.0] - 2026-05-26
+
+### Added
+- **PWA support** — the app ships a web app manifest so it can be installed to the home screen on Android and iOS like a native app.
+
+### Changed
+- Dependency updates: `sigstore/cosign-installer` → v4.1.2; `aquasecurity/trivy-action` → v0.36.0; `softprops/action-gh-release` → v3.
+
+---
+
+## [v0.15.10] - 2026-05-15
+
+### Changed
+- Dependency update: `requests` → v2.34.2.
+
+---
+
+## [v0.15.9] - 2026-05-14
+
+### Changed
+- Dependency update: `requests` → v2.34.1.
+
+---
+
+## [v0.15.8] - 2026-05-12
+
+### Changed
+- Dependency update: `requests` → v2.34.0.
+
+---
+
+## [v0.15.7] - 2026-04-26
+
+### Fixed
+- FD exhaustion crash — file descriptors leaked on connection errors; fixed with explicit `response.close()` calls.
+- GeoIP requests upgraded from HTTP to HTTPS.
+
+---
+
+## [v0.15.6] - 2026-04-24
+
+### Changed
+- Dependency update: `flask-wtf` → v1.3.0.
+
+---
+
+## [v0.15.5] - 2026-03-31
+
+### Changed
+- Dependency update: `requests` → v2.33.1.
+
+---
+
+## [v0.15.4] - 2026-03-26
+
+### Changed
+- Minor internal adjustments (no user-facing changes).
+
+---
+
+## [v0.15.3] - 2026-03-26
+
+### Changed
+- Dependency update: `sigstore/cosign-installer` → v4.1.1.
+
+---
+
+## [v0.15.2] - 2026-03-26
+
+### Changed
+- Dependency update: `requests` → v2.33.0.
+
+---
+
+## [v0.15.1] - 2026-03-24
+
+### Fixed
+- Resolve semgrep CSRF, SSRF, and NaN-injection findings in the invite creation form.
+- Swap `#page-style` on PJAX navigation to prevent CSS bleed between tabs.
+
+---
+
+## [v0.15.0] - 2026-03-23
+
+### Added
+- **Persistent PJAX outer shell** — `manual_ui.html` becomes the persistent outer shell; nav clicks swap only `#page-content` and `#page-style` without a full reload. Now Playing is included in the nav bar.
+- Library scan trigger moved from the dashboard to the Now Playing page.
+
+---
+
+## [v0.14.2] - 2026-03-23
+
+### Fixed
+- Set map container height inline and call `map.invalidateSize()` after PJAX injection so Leaflet tiles render correctly.
+
+---
+
+## [v0.14.1] - 2026-03-23
+
+### Fixed
+- Pass `plex_url` to the `now_playing` template so thumbnail proxy URLs are constructed correctly.
+
+---
+
+## [v0.14.0] - 2026-03-23
+
+### Added
+- Now Playing page enhancements — larger map, display of both local and remote IP addresses, full library scan trigger, fix for remote session pause-state detection.
+
+---
+
+## [v0.13.9] - 2026-03-23
+
+### Fixed
+- Read `remotePublicAddress` from the raw Plex XML attribute rather than a parsed property, fixing blank geo maps for remote players.
+
+---
+
+## [v0.13.8] - 2026-03-23
+
+### Fixed
+- Merge quality values across deduplicated webhook events so multi-episode imports show all unique qualities.
+- Prefer the remote public IP over the local IP when looking up geolocation for the Now Playing map.
+
+---
+
+## [v0.13.7] - 2026-03-23
+
+### Security
+- Replace `send_file` with `make_response` in the thumbnail proxy to eliminate the path-injection taint flow flagged by CodeQL.
+
+---
+
+## [v0.13.6] - 2026-03-23
+
+### Security
+- Whitelist allowed content-types in the thumbnail proxy to break the path-taint chain detected by static analysis.
+
+---
+
+## [v0.13.5] - 2026-03-23
+
+### Security
+- Serve thumbnail proxy responses via `send_file` to eliminate the XSS sink flagged by CodeQL.
+
+---
+
+## [v0.13.4] - 2026-03-23
+
+### Security
+- Validate image magic bytes in the thumbnail proxy before serving the response.
+
+---
+
+## [v0.13.3] - 2026-03-23
+
+### Fixed
+- Sanitize the thumbnail cache key to safe path characters only, preventing path traversal.
+- Show all unique quality values when a multi-episode import contains files of different qualities.
+
+---
+
+## [v0.13.2] - 2026-03-23
+
+### Fixed
+- Catch curl errors in the Docker health check retry loop so transient failures do not abort the check.
+
+### Changed
+- Dependency updates: `actions/upload-artifact` → v7; `plexapi` → v4.18.1.
+
+---
+
+## [v0.13.1] - 2026-03-20
+
+### Changed
+- Minor internal CI adjustments (no user-facing changes).
+
+---
+
+## [v0.13.0] - 2026-03-20
+
+### Added
+- **Demo mode** (`DEMO_MODE=true`) — runs the app with synthetic data so the UI can be explored without a live Plex server.
+- **Now Playing page** (`/now-playing`) — active Plex streams with player info, thumbnail, progress bar, stream quality, and an interactive Leaflet geo-map. Local-network IPs show a "Local Network" indicator.
+- **Invite management** (`/invites`) — create time-limited Plex invite links; configure library sections, sync/channels permissions, home-user flag, max uses, and link/access expiry. Public acceptance flow at `/invite/<token>`.
+
+### Fixed
+- Restore full invite system that had been lost in a prior refactor.
+
+---
+
+## [v0.12.2] - 2026-03-20
+
+### Changed
+- Minor internal adjustments (no user-facing changes).
+
+---
+
+## [v0.12.1] - 2026-03-20
+
+### Changed
+- Minor internal adjustments (no user-facing changes).
+
+---
+
+## [v0.12.0] - 2026-03-20
+
+### Added
+- **Top pagination bar** — a second set of pagination controls above the sync history list so you can jump pages without scrolling to the bottom.
+- **First / Last page buttons** and a **jump-to-page** number input alongside the standard Previous / Next controls.
+- **Back-to-top button** — a fixed `↑ Top` button appears on the Sync tab after scrolling down; hidden on other tabs.
+- **Clickable logo** — the header logo links back to the Sync tab home page.
+
+---
+
+## [v0.11.4] - 2026-03-19
+
+### Fixed
+- Episode hover tooltip width uses `max-content` so long filenames are never clipped.
+
+---
+
+## [v0.11.3] - 2026-03-19
+
+### Fixed
+- Widen episode hover tooltip and display one filename per line for easier reading.
+
+---
+
+## [v0.11.2] - 2026-03-19
+
+### Fixed
+- Widen tag legend box to 180 px to prevent text overflow on longer label text.
+
+---
+
+## [v0.11.1] - 2026-03-19
+
+### Fixed
+- Remove truncation ellipsis from the episode hover tooltip so every filename is fully visible.
 
 ---
 
