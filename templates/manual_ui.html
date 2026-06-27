@@ -344,6 +344,13 @@
   .refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
   .refresh-btn.spinning { animation: spin 0.6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .interval-input {
+    font-family: 'IBM Plex Mono', monospace; font-size: 9px; width: 52px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--muted); padding: 2px 4px; text-align: center;
+    outline: none; transition: border-color 0.15s, color 0.15s;
+  }
+  .interval-input:hover, .interval-input:focus { border-color: var(--accent); color: var(--text); }
 
   .tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .tag {
@@ -652,6 +659,8 @@
       <span id="stream-count" style="color:var(--muted);font-size:9px;"></span>
       <span style="margin-left:auto;display:flex;align-items:center;gap:8px;">
         <a href="/now-playing" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--accent);text-decoration:none;padding:2px 8px;border:1px solid var(--accent);border-radius:var(--radius);">Open ↗</a>
+        <span id="np-mini-countdown" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.05em;min-width:28px;text-align:right;"></span>
+        <input type="number" id="np-interval-input" class="interval-input" min="-1" value="10" title="Now Playing refresh interval in seconds · 0 = live · -1 = off">
         <button type="button" id="np-refresh-btn" class="refresh-btn" title="Refresh now">↻</button>
       </span>
     </div>
@@ -681,7 +690,8 @@
         ({{ total_count }} total, {{ retention_days }} day{{ 's' if retention_days != 1 else '' }} retention)
       </span>
       <span style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-        <span id="refresh-countdown" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.05em;">30s</span>
+        <span id="refresh-countdown" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.05em;min-width:28px;text-align:right;">30s</span>
+        <input type="number" id="sync-interval-input" class="interval-input" min="-1" value="30" title="Sync history refresh interval in seconds · 0 = live · -1 = off">
         <button type="button" id="refresh-btn" class="refresh-btn" title="Refresh now">↻</button>
       </span>
     </div>
@@ -931,17 +941,24 @@
     });
   }
 
-  /* ---------- auto-refresh ---------- */
-  var INTERVAL = 30, remaining = INTERVAL;
+  /* ---------- auto-refresh (sync history) ---------- */
+  var SYNC_LS = 'servarr_sync_interval';
+  var INTERVAL = parseInt(localStorage.getItem(SYNC_LS) || '30', 10);
+  var remaining = INTERVAL;
   var countdownEl = document.getElementById('refresh-countdown');
   var btn = document.getElementById('refresh-btn');
-  function setCountdown(n) { if (countdownEl) countdownEl.textContent = n + 's'; }
-  async function doRefresh() {
-    clearInterval(tick);
-    if (btn) btn.classList.add('spinning');
+  var syncInput = document.getElementById('sync-interval-input');
+  if (syncInput) syncInput.value = INTERVAL;
+  function setSyncStatus() {
+    if (!countdownEl) return;
+    if (INTERVAL < 0) { countdownEl.textContent = 'OFF'; return; }
+    if (INTERVAL === 0) { countdownEl.textContent = 'LIVE'; return; }
+    countdownEl.textContent = remaining + 's';
+  }
+  async function fetchAndUpdateHistory() {
     try {
       var res = await fetch(window.location.href, {cache: 'no-store'});
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (!res.ok) return;
       var html = await res.text();
       var doc = new DOMParser().parseFromString(html, 'text/html');
       var nb = doc.getElementById('history-body'), cb = document.getElementById('history-body');
@@ -949,23 +966,54 @@
       var nc = doc.getElementById('total-count'), cc = document.getElementById('total-count');
       if (nc && cc) cc.textContent = nc.textContent;
     } catch(e) { console.warn('Refresh failed:', e); }
-    if (btn) btn.classList.remove('spinning');
-    startCountdown();
   }
-  function startCountdown() {
-    remaining = INTERVAL; setCountdown(remaining);
-    tick = setInterval(function() { remaining--; setCountdown(remaining); if (remaining <= 0) doRefresh(); }, 1000);
+  async function doRefresh() {
+    clearInterval(tick);
+    if (btn) btn.classList.add('spinning');
+    await fetchAndUpdateHistory();
+    if (btn) btn.classList.remove('spinning');
+    startSyncCountdown();
+  }
+  function startSyncCountdown() {
+    clearInterval(tick);
+    if (INTERVAL < 0) { setSyncStatus(); return; }
+    if (INTERVAL === 0) {
+      setSyncStatus();
+      tick = setInterval(fetchAndUpdateHistory, 1000);
+      return;
+    }
+    remaining = INTERVAL; setSyncStatus();
+    tick = setInterval(function() { remaining--; setSyncStatus(); if (remaining <= 0) doRefresh(); }, 1000);
+  }
+  if (syncInput) {
+    syncInput.addEventListener('change', function() {
+      INTERVAL = Math.max(-1, parseInt(this.value, 10) || -1);
+      this.value = INTERVAL;
+      localStorage.setItem(SYNC_LS, INTERVAL);
+      startSyncCountdown();
+    });
   }
   if (btn) btn.addEventListener('click', doRefresh);
-  startCountdown();
+  startSyncCountdown();
 
   /* ---------- back to top ---------- */
   var btt = document.getElementById('back-to-top');
   if (btt) { window.onscroll = function() { btt.classList.toggle('visible', window.scrollY > 300); }; }
 
   /* ---------- Now Playing ---------- */
-  var NP_INTERVAL = 10, npRemaining = NP_INTERVAL;
+  var NP_LS = 'servarr_np_interval';
+  var NP_INTERVAL = parseInt(localStorage.getItem(NP_LS) || '10', 10);
+  var npRemaining = NP_INTERVAL;
   var npBtn = document.getElementById('np-refresh-btn');
+  var npCountdownEl = document.getElementById('np-mini-countdown');
+  var npInput = document.getElementById('np-interval-input');
+  if (npInput) npInput.value = NP_INTERVAL;
+  function setNpStatus() {
+    if (!npCountdownEl) return;
+    if (NP_INTERVAL < 0) { npCountdownEl.textContent = 'OFF'; return; }
+    if (NP_INTERVAL === 0) { npCountdownEl.textContent = 'LIVE'; return; }
+    npCountdownEl.textContent = npRemaining + 's';
+  }
 
   function fmtMs(ms) {
     if (!ms || ms < 0) return '';
@@ -1064,8 +1112,25 @@
     startNpCountdown();
   }
   function startNpCountdown() {
-    npRemaining = NP_INTERVAL;
-    npTick = setInterval(function() { npRemaining--; if (npRemaining<=0) doNpRefresh(); }, 1000);
+    clearInterval(npTick);
+    if (NP_INTERVAL < 0) { setNpStatus(); return; }
+    if (NP_INTERVAL === 0) {
+      setNpStatus();
+      npTick = setInterval(function() {
+        fetch('/api/sessions',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)renderSessions(d);}).catch(function(){});
+      }, 1000);
+      return;
+    }
+    npRemaining = NP_INTERVAL; setNpStatus();
+    npTick = setInterval(function() { npRemaining--; setNpStatus(); if (npRemaining<=0) doNpRefresh(); }, 1000);
+  }
+  if (npInput) {
+    npInput.addEventListener('change', function() {
+      NP_INTERVAL = Math.max(-1, parseInt(this.value, 10) || -1);
+      this.value = NP_INTERVAL;
+      localStorage.setItem(NP_LS, NP_INTERVAL);
+      startNpCountdown();
+    });
   }
   if (npBtn) npBtn.addEventListener('click', doNpRefresh);
   doNpRefresh();

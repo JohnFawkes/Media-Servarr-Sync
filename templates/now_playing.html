@@ -109,6 +109,13 @@
   .refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
   .refresh-btn.spinning { animation: spin 0.6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .interval-input {
+    font-family: 'IBM Plex Mono', monospace; font-size: 9px; width: 52px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--muted); padding: 2px 4px; text-align: center;
+    outline: none; transition: border-color 0.15s, color 0.15s;
+  }
+  .interval-input:hover, .interval-input:focus { border-color: var(--accent); color: var(--text); }
 
   /* -------- Now Playing -------- */
   .np-empty {
@@ -292,7 +299,8 @@
       Now Playing
       <span id="stream-count" style="color:var(--muted);font-size:9px;"></span>
       <span style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-        <span id="np-countdown" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.05em;">10s</span>
+        <span id="np-countdown" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.05em;min-width:28px;text-align:right;">10s</span>
+        <input type="number" id="np-interval-input" class="interval-input" min="-1" value="10" title="Refresh interval in seconds · 0 = live · -1 = off">
         <button type="button" id="np-refresh-btn" class="refresh-btn" title="Refresh now">↻</button>
       </span>
     </div>
@@ -365,7 +373,8 @@
 </script>
 <script id="page-init">
 (function(){
-  var NP_INTERVAL = 10;
+  var NP_LS = 'servarr_np_interval';
+  var NP_INTERVAL = parseInt(localStorage.getItem(NP_LS) || '10', 10);
   var npRemaining = NP_INTERVAL;
   var npTick;
   var activeMaps = {};
@@ -379,9 +388,14 @@
 
   var npCountdownEl = document.getElementById('np-countdown');
   var npBtn         = document.getElementById('np-refresh-btn');
+  var npInput       = document.getElementById('np-interval-input');
+  if (npInput) npInput.value = NP_INTERVAL;
 
-  function setNpCountdown(n) {
-    if (npCountdownEl) npCountdownEl.textContent = n + 's';
+  function setNpStatus() {
+    if (!npCountdownEl) return;
+    if (NP_INTERVAL < 0) { npCountdownEl.textContent = 'OFF'; return; }
+    if (NP_INTERVAL === 0) { npCountdownEl.textContent = 'LIVE'; return; }
+    npCountdownEl.textContent = npRemaining + 's';
   }
 
   function fmtMs(ms) {
@@ -589,15 +603,31 @@
   }
 
   function startNpCountdown() {
-    npRemaining = NP_INTERVAL;
-    setNpCountdown(npRemaining);
+    clearInterval(npTick);
+    if (NP_INTERVAL < 0) { setNpStatus(); return; }
+    if (NP_INTERVAL === 0) {
+      setNpStatus();
+      npTick = setInterval(function() {
+        fetch('/api/sessions', {cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)renderSessions(d);}).catch(function(){});
+      }, 1000);
+      return;
+    }
+    npRemaining = NP_INTERVAL; setNpStatus();
     npTick = setInterval(function() {
       npRemaining--;
-      setNpCountdown(npRemaining);
+      setNpStatus();
       if (npRemaining <= 0) doNpRefresh();
     }, 1000);
   }
 
+  if (npInput) {
+    npInput.addEventListener('change', function() {
+      NP_INTERVAL = Math.max(-1, parseInt(this.value, 10) || -1);
+      this.value = NP_INTERVAL;
+      localStorage.setItem(NP_LS, NP_INTERVAL);
+      startNpCountdown();
+    });
+  }
   if (npBtn) npBtn.addEventListener('click', doNpRefresh);
   doNpRefresh();
 
