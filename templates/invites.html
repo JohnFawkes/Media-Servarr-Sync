@@ -464,13 +464,18 @@
       .then(function(r) { if (!r.ok) throw r; return r.text(); })
       .then(function(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newPath = new URL(url, location.origin).pathname;
+        /* hide sync-only chrome BEFORE the CSS swap to prevent layout flash */
+        var btt = document.getElementById('back-to-top');
+        if (btt) { btt.classList.remove('visible'); btt.style.display = 'none'; }
+        var leg = document.querySelector('.legend');
+        if (leg) leg.style.display = 'none';
         var nc = doc.getElementById('page-content');
         var cc = document.getElementById('page-content');
         if (nc && cc) cc.innerHTML = nc.innerHTML;
         var ns = doc.getElementById('page-style');
         var cs = document.getElementById('page-style');
         if (ns && cs) cs.textContent = ns.textContent;
-        var newPath = new URL(url, location.origin).pathname;
         document.querySelectorAll('a.nav-link').forEach(function(a) {
           a.classList.toggle('active', new URL(a.href, location.origin).pathname === newPath);
         });
