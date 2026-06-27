@@ -203,8 +203,8 @@
   .ep-tip-row:last-child { border-bottom: none; }
   .ep-tip-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
   .ep-tip-tag { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 600; }
-  .ep-tip-tag-q { background: var(--tag-quality-bg, #2a3a2a); color: var(--tag-quality-fg, #7ecb7e); }
-  .ep-tip-tag-cf { background: var(--tag-cf-bg, #1e2a38); color: var(--tag-cf-fg, #7ab3e0); }
+  .ep-tip-tag-q { background: rgba(96,165,250,0.13); color: #60a5fa; }
+  .ep-tip-tag-cf { background: rgba(167,139,250,0.12); color: #a78bfa; }
 
   .filter-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
   .filter-search {
@@ -771,8 +771,8 @@
         <div>
           <span class="h-path">{{ h.path }}</span>
           {% if h.episode_display %}
-            {% if h.episode_rich and h.episode_list %}
-            {# Rich tooltip: badge + hover popup with per-file quality/format tags #}
+            {% if h.episode_rich and h.episode_list | length > 1 %}
+            {# Rich tooltip: badge + hover popup with per-file quality/format tags (multi-episode only) #}
             <div>
               <div class="ep-wrap">
                 <span class="episode-count-badge">{{ h.episode_display }}</span>
