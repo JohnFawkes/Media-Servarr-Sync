@@ -5,16 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Invites · Plex Dashboard</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
-<link rel="manifest" href="/manifest.json">
+
 <meta name="theme-color" content="#e5a00d">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ServarrSync">
 <link rel="apple-touch-icon" href="/static/icon.svg">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="/static/fonts.css">
 <style id="page-style">
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap');
 
   :root {
     --bg: #0d0d0f; --surface: #161618; --border: #2a2a2e;
@@ -80,7 +79,7 @@
 
   .field { display: flex; flex-direction: column; gap: 5px; }
   .field-full { grid-column: 1 / -1; }
-  label {
+  label, .field-group-label {
     font-family: 'IBM Plex Mono', monospace; font-size: 10px;
     letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
   }
@@ -278,7 +277,7 @@
 
         <!-- Libraries -->
         <div class="field field-full">
-          <label>Libraries <span style="font-weight:400;text-transform:none;letter-spacing:0">(leave all unchecked to grant access to everything)</span></label>
+          <div class="field-group-label">Libraries <span style="font-weight:400;text-transform:none;letter-spacing:0">(leave all unchecked to grant access to everything)</span></div>
           {% if libraries %}
           <div class="lib-grid">
             {% for lib in libraries %}
@@ -298,7 +297,7 @@
 
         <!-- Permissions -->
         <div class="field">
-          <label>Permissions</label>
+          <div class="field-group-label">Permissions</div>
           <div class="checkbox-group">
             <label class="check-item">
               <input type="checkbox" name="allow_sync">
@@ -320,8 +319,8 @@
 
         <!-- Duration + Uses -->
         <div class="field">
-          <label>Access Duration (after accepting)</label>
-          <select name="duration_days">
+          <label for="inv-duration">Access Duration (after accepting)</label>
+          <select id="inv-duration" name="duration_days">
             <option value="0">Permanent</option>
             <option value="30">30 days</option>
             <option value="60">60 days</option>
@@ -330,16 +329,16 @@
             <option value="365">1 year</option>
           </select>
 
-          <label style="margin-top:12px;">Link Expires In</label>
-          <select name="link_expires_days">
+          <label for="inv-link-expires" style="margin-top:12px;">Link Expires In</label>
+          <select id="inv-link-expires" name="link_expires_days">
             <option value="7">7 days</option>
             <option value="14">14 days</option>
             <option value="30">30 days</option>
             <option value="0">Never</option>
           </select>
 
-          <label style="margin-top:12px;">Max Uses</label>
-          <input type="number" name="max_uses" value="1" min="0" style="width:100px;">
+          <label for="inv-max-uses" style="margin-top:12px;">Max Uses</label>
+          <input id="inv-max-uses" type="number" name="max_uses" value="1" min="0" style="width:100px;">
           <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px;">0 = unlimited</div>
         </div>
 
@@ -454,7 +453,6 @@
   </div>{# /page-content #}
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLs=" crossorigin=""></script>
 <script>/* PJAX: intercept nav-link clicks, swap #page-content, re-run page-init */
 (function() {
   function pjaxLoad(url) {
@@ -466,13 +464,18 @@
       .then(function(r) { if (!r.ok) throw r; return r.text(); })
       .then(function(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newPath = new URL(url, location.origin).pathname;
+        /* hide sync-only chrome BEFORE the CSS swap to prevent layout flash */
+        var btt = document.getElementById('back-to-top');
+        if (btt) { btt.classList.remove('visible'); btt.style.display = 'none'; }
+        var leg = document.querySelector('.legend');
+        if (leg) leg.style.display = 'none';
         var nc = doc.getElementById('page-content');
         var cc = document.getElementById('page-content');
         if (nc && cc) cc.innerHTML = nc.innerHTML;
         var ns = doc.getElementById('page-style');
         var cs = document.getElementById('page-style');
         if (ns && cs) cs.textContent = ns.textContent;
-        var newPath = new URL(url, location.origin).pathname;
         document.querySelectorAll('a.nav-link').forEach(function(a) {
           a.classList.toggle('active', new URL(a.href, location.origin).pathname === newPath);
         });
