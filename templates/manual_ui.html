@@ -791,7 +791,7 @@
                 </div>
               </div>
             </div>
-            {% elif h.episode_list %}
+            {% elif not h.episode_rich and h.episode_list %}
             {# Legacy tooltip: badge + filenames only #}
             <div>
               <div class="ep-wrap">
