@@ -1,0 +1,87 @@
+name: Append Renovate entry to CHANGELOG
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [dev]
+
+jobs:
+  update-changelog:
+    if: >
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.user.login == 'renovate[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+          token: ${{ secrets.PAT }}
+
+      - name: Append changelog entry
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+
+          title = os.environ["PR_TITLE"]
+
+          # Strip conventional-commit prefix: "chore(deps): " / "chore(deps-dev): " etc.
+          entry = re.sub(r'^chore\([^)]*\):\s*', '', title).strip()
+          # Capitalise first letter
+          entry = entry[0].upper() + entry[1:] if entry else title
+
+          with open("CHANGELOG.md", "r") as f:
+              lines = f.readlines()
+
+          # Find the [Unreleased] heading (create it if absent)
+          heading_idx = next(
+              (i for i, l in enumerate(lines) if re.match(r'^## \[Unreleased\]', l)),
+              None,
+          )
+          if heading_idx is None:
+              # Prepend an [Unreleased] block before the first versioned entry
+              first_ver = next(i for i, l in enumerate(lines) if re.match(r'^## \[v\d', l))
+              insert = ["## [Unreleased]\n", "\n", "---\n", "\n"]
+              lines[first_ver:first_ver] = insert
+              heading_idx = first_ver
+
+          # Find the --- separator that closes this block
+          sep_idx = next(
+              i for i, l in enumerate(lines) if i > heading_idx and l.strip() == "---"
+          )
+
+          # Look for an existing "### Changed" within this block
+          changed_idx = next(
+              (i for i, l in enumerate(lines) if heading_idx < i < sep_idx and l.strip() == "### Changed"),
+              None,
+          )
+
+          bullet = f"- {entry}\n"
+
+          if changed_idx is not None:
+              # Insert the bullet directly after the "### Changed" heading
+              lines.insert(changed_idx + 1, bullet)
+          else:
+              # No "### Changed" section yet — add one before the "---" separator
+              lines.insert(sep_idx, "\n")
+              lines.insert(sep_idx, bullet)
+              lines.insert(sep_idx, "### Changed\n")
+
+          with open("CHANGELOG.md", "w") as f:
+              f.writelines(lines)
+
+          print(f"Appended: {bullet.strip()}")
+          EOF
+
+      - name: Commit changelog update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --staged --quiet && echo "No changes." || \
+            git commit -m "chore: changelog entry for renovate dependency update [skip ci]" && \
+            git push
