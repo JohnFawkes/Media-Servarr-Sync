@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [v0.12.0] - 2026-06-27
+## [Unreleased]
 
 ### Added
 - **Configurable refresh intervals** — both the Now Playing card and the Sync history card now expose a number input (with up/down arrows) to set the auto-refresh interval. `0` enables live mode (1-second polling, shows `LIVE`), `-1` disables auto-refresh entirely (shows `OFF`), and any positive integer sets the interval in seconds with a live countdown. Settings persist across page loads and PJAX tab switches via `localStorage` (`servarr_np_interval` and `servarr_sync_interval`). The interval input also appears on the full `/now-playing` page and shares the same stored value as the mini dashboard widget.
@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - **Self-hosted web fonts** — Google Fonts `@import` URLs replaced with locally served woff2 files (`/static/fonts/`) across all templates. Eliminates stylesheet load failures behind reverse proxies or bot-protection layers (e.g. Anubis) that block external CDN requests. IBM Plex Mono (400/500/600) and IBM Plex Sans (400/500) are served directly from the container with no external dependency.
+
+### CI
+- **CHANGELOG-driven releases** — `docker-publish.yml` now promotes `[Unreleased]` to a versioned heading on merge to `dev` (minor bump if `### Added` present, patch otherwise), commits it back with `[skip ci]`, and feeds the result to `mindsers/changelog-reader-action` + `softprops/action-gh-release` so release notes come directly from the changelog.
+- **Renovate auto-changelog** — new `changelog-renovate.yml` workflow appends a `### Changed` bullet to `[Unreleased]` whenever a Renovate PR is merged to `dev`.
 
 ---
 

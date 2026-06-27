@@ -37,11 +37,19 @@ jobs:
           with open("CHANGELOG.md", "r") as f:
               lines = f.readlines()
 
-          # Find the first version heading (## [vX.Y.Z])
+          # Find the [Unreleased] heading (create it if absent)
           heading_idx = next(
-              i for i, l in enumerate(lines) if re.match(r'^## \[v\d', l)
+              (i for i, l in enumerate(lines) if re.match(r'^## \[Unreleased\]', l)),
+              None,
           )
-          # Find the next "---" separator (end of that version block)
+          if heading_idx is None:
+              # Prepend an [Unreleased] block before the first versioned entry
+              first_ver = next(i for i, l in enumerate(lines) if re.match(r'^## \[v\d', l))
+              insert = ["## [Unreleased]\n", "\n", "---\n", "\n"]
+              lines[first_ver:first_ver] = insert
+              heading_idx = first_ver
+
+          # Find the --- separator that closes this block
           sep_idx = next(
               i for i, l in enumerate(lines) if i > heading_idx and l.strip() == "---"
           )
