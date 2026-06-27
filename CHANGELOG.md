@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [v0.12.0] - 2026-06-27
 
 ### Added
 - **Configurable refresh intervals** — both the Now Playing card and the Sync history card now expose a number input (with up/down arrows) to set the auto-refresh interval. `0` enables live mode (1-second polling, shows `LIVE`), `-1` disables auto-refresh entirely (shows `OFF`), and any positive integer sets the interval in seconds with a live countdown. Settings persist across page loads and PJAX tab switches via `localStorage` (`servarr_np_interval` and `servarr_sync_interval`). The interval input also appears on the full `/now-playing` page and shares the same stored value as the mini dashboard widget.
