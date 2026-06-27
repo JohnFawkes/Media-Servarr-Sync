@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **Per-episode tags now render for batch downloads** — when Sonarr sends a single webhook with multiple files in `episodeFiles` or `renamedEpisodeFiles`, each file's quality is now stored individually in the rich episode object rather than being merged into a flat tag row. Custom formats from the same release are shared across all files in the batch.
+- **Episode badge tooltip shows per-file quality and format tags** — hovering the yellow episode-count badge now displays each filename alongside its own quality and custom-format pills inside the popup, instead of expanding into separate rows below the folder path. The flat merged tag row below the folder is unchanged.
+- **Tag legend tooltip hint** — a short note in the tag legend reminds users to hover the episode badge to see per-file details.
 
 ---
 
