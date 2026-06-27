@@ -944,66 +944,99 @@ def _find_plex_item(plex_instance, library, task: SyncTask):
 def _merge_episode_counts(existing: str, incoming: str) -> str:
     """Accumulate episode info when duplicate webhooks arrive for the same folder.
 
-    When individual filenames are known, stores as a JSON list so the UI can
-    render a hover tooltip. Falls back to a plain count string for older records
-    that only carry a count.
+    Supports two storage formats:
+    - Rich: JSON list of {"f": filename, "q": quality, "cf": [formats]} dicts
+    - Legacy: JSON list of filename strings, or plain "N episodes" count string
+
+    Rich objects from different webhooks are merged by episode key (SxxExx).
+    If either side is rich, the result is always rich.
     """
-    def _to_list(ep: str) -> tuple:
+    def _ep_key(name: str) -> str | None:
+        m = re.search(r'[Ss](\d+)[Ee](\d+)', name)
+        return f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}" if m else None
+
+    def _parse(ep: str) -> tuple:
+        """Return (rich_list, plain_list, count_only)."""
         if not ep:
-            return [], 0
+            return [], [], 0
         try:
             parsed = json.loads(ep)
-            if isinstance(parsed, list):
-                return parsed, len(parsed)
+            if isinstance(parsed, list) and parsed:
+                if isinstance(parsed[0], dict):
+                    return parsed, [], len(parsed)
+                return [], [x for x in parsed if isinstance(x, str)], len(parsed)
         except (json.JSONDecodeError, ValueError):
             pass
         m = re.match(r'^(\d+) episodes?$', ep.strip())
         if m:
-            return [], int(m.group(1))
-        return [ep], 1  # single filename
+            return [], [], int(m.group(1))
+        return [], [ep], 1  # single filename string
 
-    def _ep_key(ep: str):
-        m = re.search(r'[Ss](\d+)[Ee](\d+)', ep)
-        return f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}" if m else None
+    ex_rich, ex_plain, ex_count = _parse(existing)
+    in_rich, in_plain, in_count = _parse(incoming)
 
-    existing_names, existing_count = _to_list(existing)
-    incoming_names, incoming_count = _to_list(incoming)
-
-    if existing_names or incoming_names:
-        seen_keys = {_ep_key(ep) for ep in existing_names}
-        merged = list(existing_names)
-        for ep in incoming_names:
-            k = _ep_key(ep)
-            if k is None or k not in seen_keys:
-                merged.append(ep)
-                if k:
-                    seen_keys.add(k)
-        if len(merged) == 1:
-            return merged[0]
+    # If either side carries rich objects, merge as rich
+    if ex_rich or in_rich:
+        merged: list = list(ex_rich)
+        seen = {_ep_key(e['f']): i for i, e in enumerate(merged) if _ep_key(e['f'])}
+        # Promote any plain strings from the other side to minimal rich objects
+        for name in ex_plain:
+            if not any(e['f'] == name for e in merged):
+                merged.append({"f": name, "q": "", "cf": []})
+        for obj in in_rich:
+            k = _ep_key(obj['f'])
+            if k and k in seen:
+                pass  # already have this episode — keep first-seen metadata
+            elif not any(e['f'] == obj['f'] for e in merged):
+                merged.append(obj)
+        for name in in_plain:
+            if not any(e['f'] == name for e in merged):
+                merged.append({"f": name, "q": "", "cf": []})
         return json.dumps(merged)
 
-    # Both sides are count-only — no filenames to recover
-    total = existing_count + incoming_count
+    # Legacy path: plain filename lists / counts
+    if ex_plain or in_plain:
+        seen_keys = {_ep_key(ep) for ep in ex_plain}
+        merged_plain = list(ex_plain)
+        for ep in in_plain:
+            k = _ep_key(ep)
+            if k is None or k not in seen_keys:
+                merged_plain.append(ep)
+                if k:
+                    seen_keys.add(k)
+        if len(merged_plain) == 1:
+            return merged_plain[0]
+        return json.dumps(merged_plain)
+
+    total = ex_count + in_count
     return f"{total} episodes" if total != 1 else (existing or incoming)
 
 
 def _parse_episode_field(ep_str: str) -> tuple:
-    """Parse a stored episode field into (display_str, episode_list).
+    """Parse a stored episode field into (display_str, episode_list, is_rich).
 
-    episode_list is non-empty only when individual filenames are known,
-    which enables the hover tooltip in the UI.
+    Returns:
+        display_str  — human-readable label ("2 episodes", filename, or "")
+        episode_list — list of rich dicts {"f", "q", "cf"} or plain filename strings;
+                       empty when only a count is known
+        is_rich      — True when episode_list contains rich dicts with per-file metadata
     """
     if not ep_str:
-        return "", []
+        return "", [], False
     try:
         parsed = json.loads(ep_str)
         if isinstance(parsed, list) and parsed:
+            if isinstance(parsed[0], dict):
+                # Rich format: [{"f": filename, "q": quality, "cf": [formats]}, ...]
+                display = parsed[0]['f'] if len(parsed) == 1 else f"{len(parsed)} episodes"
+                return display, parsed, True
+            # Legacy plain-string list
             if len(parsed) == 1:
-                return parsed[0], []
-            return f"{len(parsed)} episodes", parsed
+                return parsed[0], [], False
+            return f"{len(parsed)} episodes", parsed, False
     except (json.JSONDecodeError, ValueError):
         pass
-    return ep_str, []
+    return ep_str, [], False
 
 
 def _extract_file_meta(file_obj: dict) -> tuple:
@@ -1169,6 +1202,7 @@ def process_webhook(data: dict, instance_type: str):
     episode = ""
     quality = ""
     custom_formats_list: list = []
+    _episode_filename = ""   # single filename; used to build rich episode object after cf lookup
 
     if 'movie' in data:
         raw_path = data['movie'].get('folderPath', '')
@@ -1177,7 +1211,8 @@ def process_webhook(data: dict, instance_type: str):
             quality, _ = _extract_file_meta(mf)
             rp = mf.get('relativePath', '')
             if rp:
-                episode = rp.replace('\\', '/').split('/')[-1]
+                _episode_filename = rp.replace('\\', '/').split('/')[-1]
+                episode = _episode_filename
 
     elif 'series' in data:
         series_path = data['series'].get('path', '')
@@ -1209,6 +1244,7 @@ def process_webhook(data: dict, instance_type: str):
                 if fn not in _deleted_filenames:
                     episode_files = [fn]
                     quality, _ = _extract_file_meta(ef)
+                    _episode_filename = fn   # single known file — used for rich episode object
                 else:
                     log.info("[%s] episodeFile '%s' matches a deletedFile — discarding stale episode info",
                              label, fn)
@@ -1244,10 +1280,11 @@ def process_webhook(data: dict, instance_type: str):
                             _quals.append(_q)
                     quality = " / ".join(_quals)
 
-        if len(episode_files) == 1:
-            episode = episode_files[0]
-        elif len(episode_files) > 1:
-            episode = json.dumps(episode_files)
+        # episode is assembled into a rich object after custom_formats are resolved below
+        if len(episode_files) > 1:
+            episode = json.dumps(episode_files)   # batch: plain list (no per-file cf data)
+        elif len(episode_files) == 1:
+            episode = episode_files[0]            # placeholder; replaced with rich object below
 
     # Log raw webhook fields for operator visibility.
     _raw_file = data.get('episodeFile') or data.get('movieFile') or {}
@@ -1297,6 +1334,12 @@ def process_webhook(data: dict, instance_type: str):
     quality_profile = _get_quality_profile_name(instance_type, item_id)
 
     custom_formats = json.dumps(custom_formats_list) if custom_formats_list else ""
+
+    # Upgrade single-file episode to a rich object so per-file quality/formats
+    # are preserved when deduplicated events for the same folder are merged.
+    if _episode_filename and (quality or custom_formats_list):
+        episode = json.dumps([{"f": _episode_filename, "q": quality, "cf": custom_formats_list}])
+
     result, status = enqueue_sync(raw_path, label, episode=episode,
                                   quality=quality, custom_formats=custom_formats,
                                   quality_profile=quality_profile)
@@ -1429,9 +1472,10 @@ def _demo_history() -> list:
         },
     ]
     for item in raw:
-        display, ep_list = _parse_episode_field(item.get('episode', ''))
+        display, ep_list, ep_rich = _parse_episode_field(item.get('episode', ''))
         item['episode_display'] = display
         item['episode_list'] = ep_list
+        item['episode_rich'] = ep_rich
         cf_raw = item.get('custom_formats', '') or ''
         try:
             item['custom_format_list'] = json.loads(cf_raw) if cf_raw else []
@@ -1536,9 +1580,10 @@ def manual_webhook():
         total_pages = (total_count + per_page - 1) // per_page
 
     for item in recent:
-        display, ep_list = _parse_episode_field(item.get('episode', ''))
+        display, ep_list, ep_rich = _parse_episode_field(item.get('episode', ''))
         item['episode_display'] = display
         item['episode_list'] = ep_list
+        item['episode_rich'] = ep_rich
         cf_raw = item.get('custom_formats', '') or ''
         try:
             item['custom_format_list'] = json.loads(cf_raw) if cf_raw else []
