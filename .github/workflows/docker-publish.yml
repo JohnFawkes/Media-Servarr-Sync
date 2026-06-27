@@ -86,8 +86,10 @@ jobs:
           versions = re.findall(r'^## \[v(\d+)\.(\d+)\.(\d+)\]', "".join(lines), re.MULTILINE)
           if versions:
               major, minor, patch = map(int, versions[0])
+              prev_version = f"v{major}.{minor}.{patch}"
           else:
               major, minor, patch = 0, 11, 0  # bootstrap from last known
+              prev_version = ""
 
           if has_breaking:
               major += 1; minor = 0; patch = 0
@@ -107,6 +109,8 @@ jobs:
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"VERSION={new_version}\n")
+              if prev_version:
+                  out.write(f"PREV_VERSION={prev_version}\n")
           PYEOF
 
       - name: Commit promoted CHANGELOG
@@ -127,12 +131,33 @@ jobs:
           version: ${{ steps.promote.outputs.VERSION }}
           path: ./CHANGELOG.md
 
+      - name: Build release body
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
+        env:
+          CHANGES: ${{ steps.changelog_reader.outputs.changes }}
+          PREV_VERSION: ${{ steps.promote.outputs.PREV_VERSION }}
+          NEW_VERSION: ${{ steps.promote.outputs.VERSION }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          changes = os.environ.get("CHANGES", "").strip()
+          prev = os.environ.get("PREV_VERSION", "")
+          new = os.environ.get("NEW_VERSION", "")
+          repo = os.environ.get("REPO", "")
+          with open("/tmp/release_body.md", "w") as f:
+              f.write(changes)
+              if prev and new and repo:
+                  compare = f"https://github.com/{repo}/compare/{prev}...{new}"
+                  f.write(f"\n\n**Full Changelog**: {compare}\n")
+          PYEOF
+
       - name: Create release
         id: create_release
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         uses: softprops/action-gh-release@v3
         with:
-          body: ${{ steps.changelog_reader.outputs.changes }}
+          body_path: /tmp/release_body.md
           token: ${{ github.token }}
           tag_name: ${{ steps.promote.outputs.VERSION }}
 
