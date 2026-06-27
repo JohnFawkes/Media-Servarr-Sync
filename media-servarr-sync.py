@@ -1202,7 +1202,8 @@ def process_webhook(data: dict, instance_type: str):
     episode = ""
     quality = ""
     custom_formats_list: list = []
-    _episode_filename = ""   # single filename; used to build rich episode object after cf lookup
+    _episode_filename = ""        # single filename; used to build rich episode object after cf lookup
+    _episode_files_meta: list = []  # [{f, q}] per file for batch episodeFiles events
 
     if 'movie' in data:
         raw_path = data['movie'].get('folderPath', '')
@@ -1252,39 +1253,36 @@ def process_webhook(data: dict, instance_type: str):
         if not episode_files:
             efs = data.get('episodeFiles', [])
             if efs:
-                episode_files = [
-                    f.get('relativePath', '').replace('\\', '/').split('/')[-1]
-                    for f in efs if f.get('relativePath')
-                ]
-                # Collect unique qualities across all files
-                if efs:
-                    _quals = []
-                    for _f in efs:
-                        _q, _ = _extract_file_meta(_f)
-                        if _q and _q not in _quals:
-                            _quals.append(_q)
-                    quality = " / ".join(_quals)
+                _quals = []
+                for _f in efs:
+                    _fn = _f.get('relativePath', '').replace('\\', '/').split('/')[-1]
+                    _q, _ = _extract_file_meta(_f)
+                    if _fn:
+                        episode_files.append(_fn)
+                        _episode_files_meta.append({"f": _fn, "q": _q})
+                    if _q and _q not in _quals:
+                        _quals.append(_q)
+                quality = " / ".join(_quals)
 
         if not episode_files:
             refs = data.get('renamedEpisodeFiles', [])
             if refs:
-                episode_files = [
-                    f.get('relativePath', '').replace('\\', '/').split('/')[-1]
-                    for f in refs if f.get('relativePath')
-                ]
-                if refs:
-                    _quals = []
-                    for _f in refs:
-                        _q, _ = _extract_file_meta(_f)
-                        if _q and _q not in _quals:
-                            _quals.append(_q)
-                    quality = " / ".join(_quals)
+                _quals = []
+                for _f in refs:
+                    _fn = _f.get('relativePath', '').replace('\\', '/').split('/')[-1]
+                    _q, _ = _extract_file_meta(_f)
+                    if _fn:
+                        episode_files.append(_fn)
+                        _episode_files_meta.append({"f": _fn, "q": _q})
+                    if _q and _q not in _quals:
+                        _quals.append(_q)
+                quality = " / ".join(_quals)
 
-        # episode is assembled into a rich object after custom_formats are resolved below
-        if len(episode_files) > 1:
-            episode = json.dumps(episode_files)   # batch: plain list (no per-file cf data)
-        elif len(episode_files) == 1:
-            episode = episode_files[0]            # placeholder; replaced with rich object below
+        # episode placeholder — upgraded to a rich object after custom_formats are resolved below
+        if len(episode_files) == 1:
+            episode = episode_files[0]
+        elif len(episode_files) > 1:
+            episode = json.dumps(episode_files)   # fallback; replaced with rich object below if meta available
 
     # Log raw webhook fields for operator visibility.
     _raw_file = data.get('episodeFile') or data.get('movieFile') or {}
@@ -1335,9 +1333,16 @@ def process_webhook(data: dict, instance_type: str):
 
     custom_formats = json.dumps(custom_formats_list) if custom_formats_list else ""
 
-    # Upgrade single-file episode to a rich object so per-file quality/formats
-    # are preserved when deduplicated events for the same folder are merged.
-    if _episode_filename and (quality or custom_formats_list):
+    # Upgrade episode info to rich objects so per-file quality/formats are preserved.
+    # Batch events (episodeFiles/renamedEpisodeFiles): each file gets its own quality;
+    # custom formats are shared across the batch (all files from the same release).
+    # Single-file events: straightforward one-item rich list.
+    if _episode_files_meta and (quality or custom_formats_list):
+        episode = json.dumps([
+            {"f": m["f"], "q": m["q"], "cf": custom_formats_list}
+            for m in _episode_files_meta
+        ])
+    elif _episode_filename and (quality or custom_formats_list):
         episode = json.dumps([{"f": _episode_filename, "q": quality, "cf": custom_formats_list}])
 
     result, status = enqueue_sync(raw_path, label, episode=episode,
