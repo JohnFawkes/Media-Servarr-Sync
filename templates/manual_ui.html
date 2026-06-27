@@ -922,12 +922,13 @@
 </script>
 <script id="page-init">
 (function() {
-  var tick = null, npTick = null, activeMaps = {};
+  var tick = null, npTick = null, activeMaps = {}, npRendered = false;
 
   window.__pjaxCleanup = function() {
     clearInterval(tick); clearInterval(npTick);
     Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
     activeMaps = {};
+    npRendered = false;
     window.onscroll = null;
   };
 
@@ -1026,58 +1027,107 @@
     if (!str) return '';
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
   }
-  function destroyMaps() {
-    Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
-    activeMaps = {};
+  function buildSessionHtml(s, safeId, machineId, pct, rem, sClass, sLbl, qualParts) {
+    var plexUrl = (machineId && s.rating_key)
+      ? '{{ plex_url }}/web/index.html#!/server/'+machineId+'/details?key='+encodeURIComponent(s.plex_item_key||'/library/metadata/'+s.rating_key) : '';
+    var sPlex = escHtml(plexUrl);
+    var poster = s.thumb_key
+      ? '<a href="'+(sPlex||'#')+'" target="_blank" rel="noopener"><img class="np-poster" src="'+escHtml('/api/thumb?key='+encodeURIComponent(s.thumb_key)+'&w=72&h=108')+'" alt="poster" loading="lazy"></a>'
+      : '<div class="np-poster-ph">?</div>';
+    var yr = parseInt(s.year,10)||0;
+    var title = s.type==='episode'
+      ? '<div class="np-show">'+escHtml(s.show_title||s.title)+'</div>'+(s.season_episode?'<div class="np-sub">'+escHtml(s.season_episode)+(s.title?' · '+escHtml(s.title):'')+' </div>':'')
+      : '<div class="np-title">'+escHtml(s.title)+(yr?' <span class="np-year">('+yr+')</span>':'')+' </div>';
+    var player = [s.player_device, s.player_platform].filter(Boolean);
+    var ip = s.player_remote_address || s.player_address || '';
+    return '<div class="np-session" data-sid="'+safeId+'" data-state="'+escHtml(s.state)+'">'
+      +'<div class="np-poster-wrap">'+poster+'</div>'
+      +'<div class="np-info">'
+      +'<div class="np-title-row"><div class="np-titles">'+title+'</div><span class="np-state '+sClass+'">'+sLbl+'</span></div>'
+      +'<div class="np-user"><span class="np-username">'+escHtml(s.user)+'</span>'
+      +(player.length?'<span class="np-sep">·</span><span>'+escHtml(player.join(' · '))+'</span>':'')
+      +(sPlex?'<a href="'+sPlex+'" target="_blank" rel="noopener" class="np-plex-link" title="Open in Plex">↗ Plex</a>':'')+'</div>'
+      +'<div class="np-progress-row"><div class="np-progress-bar"><div class="np-progress-fill" style="width:'+pct+'%"></div></div>'
+      +'<span class="np-pct">'+pct.toFixed(0)+'%</span>'+(rem?'<span class="np-remaining">'+rem+' left</span>':'')+'</div>'
+      +(qualParts.length?'<div class="np-quality">'+escHtml(qualParts.join(' · '))+'</div>':'')
+      +'<div class="np-ip-row">'+(ip?'<span class="np-ip">'+escHtml(ip)+'</span>':'')+'<span class="np-geo-text" id="geo-text-'+safeId+'"></span></div>'
+      +'</div>'
+      +'<div class="np-map-col"><div id="np-map-'+safeId+'"></div></div>'
+      +'</div>';
   }
   function renderSessions(data) {
     var container = document.getElementById('now-playing-body');
     var countEl = document.getElementById('stream-count');
     if (!container) return;
-    destroyMaps();
     var sessions = data.sessions || [], machineId = data.machine_id || '';
     if (countEl) countEl.textContent = '(' + sessions.length + ' stream' + (sessions.length !== 1 ? 's' : '') + ')';
-    if (!sessions.length) { container.innerHTML = '<div class="np-empty">No active streams</div>'; return; }
-    var html = '';
+
+    if (!npRendered) {
+      // First load: full rebuild
+      npRendered = true;
+      Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
+      activeMaps = {};
+      if (!sessions.length) { container.innerHTML = '<div class="np-empty">No active streams</div>'; return; }
+      container.innerHTML = sessions.map(function(s) {
+        var safeId = String(s.session_id).replace(/[^a-zA-Z0-9_-]/g,'');
+        var pct = Math.min(100, Math.max(0, s.progress_pct||0));
+        var rem = fmtMs((s.duration_ms||0)-(s.view_offset_ms||0));
+        var sClass = stateClass(s.state), sLbl = stateLabel(s.state);
+        var qual = [s.stream_type, s.video_resolution?s.video_resolution.toUpperCase():'', s.bitrate_kbps?(s.bitrate_kbps/1000).toFixed(1)+' Mbps':''].filter(Boolean);
+        return buildSessionHtml(s, safeId, machineId, pct, rem, sClass, sLbl, qual);
+      }).join('');
+      sessions.forEach(function(s) {
+        var ip = s.player_remote_address || s.player_address || '';
+        if (ip) initGeo(String(s.session_id).replace(/[^a-zA-Z0-9_-]/g,''), ip);
+      });
+      return;
+    }
+
+    // Subsequent calls: patch only dynamic fields, leave map/poster/geo intact
+    var incoming = {};
+    sessions.forEach(function(s) { incoming[String(s.session_id).replace(/[^a-zA-Z0-9_-]/g,'')] = s; });
+
+    container.querySelectorAll('.np-session[data-sid]').forEach(function(row) {
+      var sid = row.getAttribute('data-sid');
+      if (!incoming[sid]) {
+        if (activeMaps[sid]) { try { activeMaps[sid].remove(); } catch(e) {} delete activeMaps[sid]; }
+        row.remove();
+      }
+    });
+
+    if (!sessions.length) {
+      if (!container.querySelector('.np-empty')) container.innerHTML = '<div class="np-empty">No active streams</div>';
+      return;
+    }
+    var emptyEl = container.querySelector('.np-empty');
+    if (emptyEl) emptyEl.remove();
+
     sessions.forEach(function(s) {
-      var pct = Math.min(100, Math.max(0, s.progress_pct || 0));
+      var safeId = String(s.session_id).replace(/[^a-zA-Z0-9_-]/g,'');
+      var pct = Math.min(100, Math.max(0, s.progress_pct||0));
       var rem = fmtMs((s.duration_ms||0)-(s.view_offset_ms||0));
       var sClass = stateClass(s.state), sLbl = stateLabel(s.state);
-      var ip = s.player_remote_address || s.player_address || '';
-      var safeId = String(s.session_id).replace(/[^a-zA-Z0-9_-]/g,'');
-      var mapId = 'np-map-' + safeId;
-      var plexUrl = (machineId && s.rating_key)
-        ? '{{ plex_url }}/web/index.html#!/server/'+machineId+'/details?key='+encodeURIComponent(s.plex_item_key||'/library/metadata/'+s.rating_key) : '';
-      var sPlex = escHtml(plexUrl);
-      var poster = s.thumb_key
-        ? '<a href="'+(sPlex||'#')+'" target="_blank" rel="noopener"><img class="np-poster" src="'+escHtml('/api/thumb?key='+encodeURIComponent(s.thumb_key)+'&w=72&h=108')+'" alt="poster" loading="lazy"></a>'
-        : '<div class="np-poster-ph">?</div>';
-      var yr = parseInt(s.year,10)||0;
-      var title = s.type==='episode'
-        ? '<div class="np-show">'+escHtml(s.show_title||s.title)+'</div>'+(s.season_episode?'<div class="np-sub">'+escHtml(s.season_episode)+(s.title?' · '+escHtml(s.title):'')+' </div>':'')
-        : '<div class="np-title">'+escHtml(s.title)+(yr?' <span class="np-year">('+yr+')</span>':'')+' </div>';
       var qual = [s.stream_type, s.video_resolution?s.video_resolution.toUpperCase():'', s.bitrate_kbps?(s.bitrate_kbps/1000).toFixed(1)+' Mbps':''].filter(Boolean);
-      var player = [s.player_device, s.player_platform].filter(Boolean);
-      html += '<div class="np-session" data-sid="'+safeId+'">'
-        +'<div class="np-poster-wrap">'+poster+'</div>'
-        +'<div class="np-info">'
-        +'<div class="np-title-row"><div class="np-titles">'+title+'</div><span class="np-state '+sClass+'">'+sLbl+'</span></div>'
-        +'<div class="np-user"><span class="np-username">'+escHtml(s.user)+'</span>'
-        +(player.length?'<span class="np-sep">·</span><span>'+escHtml(player.join(' · '))+'</span>':'')
-        +(sPlex?'<a href="'+sPlex+'" target="_blank" rel="noopener" class="np-plex-link" title="Open in Plex">↗ Plex</a>':'')+'</div>'
-        +'<div class="np-progress-row"><div class="np-progress-bar"><div class="np-progress-fill" style="width:'+pct+'%"></div></div>'
-        +'<span class="np-pct">'+pct.toFixed(0)+'%</span>'+(rem?'<span class="np-remaining">'+rem+' left</span>':'')+'</div>'
-        +(qual.length?'<div class="np-quality">'+escHtml(qual.join(' · '))+'</div>':'')
-        +'<div class="np-ip-row">'+(ip?'<span class="np-ip">'+escHtml(ip)+'</span>':'')+'<span class="np-geo-text" id="geo-text-'+safeId+'"></span></div>'
-        +'</div>'
-        +'<div class="np-map-col"><div id="'+mapId+'"></div></div>'
-        +'</div>';
-    });
-    container.innerHTML = html;
-    sessions.forEach(function(s) {
-      var ip = s.player_remote_address || s.player_address || '';
-      var safeId = String(s.session_id).replace(/[^a-zA-Z0-9_-]/g,'');
-      if (ip) initGeo(safeId, ip);
+      var row = container.querySelector('.np-session[data-sid="'+safeId+'"]');
+      if (row) {
+        row.setAttribute('data-state', s.state);
+        var stEl = row.querySelector('.np-state');
+        if (stEl) { stEl.className = 'np-state '+sClass; stEl.textContent = sLbl; }
+        var fillEl = row.querySelector('.np-progress-fill');
+        if (fillEl) fillEl.style.width = pct+'%';
+        var pctEl = row.querySelector('.np-pct');
+        if (pctEl) pctEl.textContent = pct.toFixed(0)+'%';
+        var remEl = row.querySelector('.np-remaining');
+        if (remEl) remEl.textContent = rem ? rem+' left' : '';
+        var qualEl = row.querySelector('.np-quality');
+        if (qualEl) qualEl.textContent = qual.join(' · ');
+      } else {
+        var tmp = document.createElement('div');
+        tmp.innerHTML = buildSessionHtml(s, safeId, machineId, pct, rem, sClass, sLbl, qual);
+        container.appendChild(tmp.firstChild);
+        var ip = s.player_remote_address || s.player_address || '';
+        if (ip) initGeo(safeId, ip);
+      }
     });
   }
   async function initGeo(sessionId, ip) {
