@@ -987,7 +987,7 @@
   }
   if (syncInput) {
     syncInput.addEventListener('change', function() {
-      INTERVAL = Math.max(-1, parseInt(this.value, 10) || -1);
+      var v = parseInt(this.value, 10); INTERVAL = Math.max(-1, isNaN(v) ? -1 : v);
       this.value = INTERVAL;
       localStorage.setItem(SYNC_LS, INTERVAL);
       startSyncCountdown();
@@ -1126,7 +1126,7 @@
   }
   if (npInput) {
     npInput.addEventListener('change', function() {
-      NP_INTERVAL = Math.max(-1, parseInt(this.value, 10) || -1);
+      var v = parseInt(this.value, 10); NP_INTERVAL = Math.max(-1, isNaN(v) ? -1 : v);
       this.value = NP_INTERVAL;
       localStorage.setItem(NP_LS, NP_INTERVAL);
       startNpCountdown();
