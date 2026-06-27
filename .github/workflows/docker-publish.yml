@@ -4,7 +4,7 @@ name: Docker Build & Publish
 # OR when a Pull Request is opened/updated against the default branch.
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "dev" ]
     # Only run if these specific files change
     paths:
       - 'media-servarr-sync.py'
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
 
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "dev" ]
     # Only run if these specific files change
     paths:
       - 'media-servarr-sync.py'
