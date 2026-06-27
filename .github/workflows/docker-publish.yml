@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.PAT || github.token }}
+          token: ${{ github.token }}
 
       # Promote [Unreleased] → [vX.Y.Z] and commit back to the branch
       - name: Promote Unreleased to versioned release
@@ -133,7 +133,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.changelog_reader.outputs.changes }}
-          token: ${{ secrets.PAT }}
+          token: ${{ github.token }}
           tag_name: ${{ steps.promote.outputs.VERSION }}
 
       # FIX: Force the image name to lowercase to avoid Docker registry errors
