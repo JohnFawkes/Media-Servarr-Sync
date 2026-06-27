@@ -5,16 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plex Dashboard</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
-<link rel="manifest" href="/manifest.json">
+
 <meta name="theme-color" content="#e5a00d">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ServarrSync">
 <link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/fonts.css">
 <link rel="stylesheet" href="/static/leaflet.css">
 <style id="page-style">
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap');
 
   :root {
     --bg: #0d0d0f;
@@ -855,23 +855,28 @@
       .then(function(r) { if (!r.ok) throw r; return r.text(); })
       .then(function(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newPath = new URL(url, location.origin).pathname;
+        var onSync = newPath === '/';
+        /* hide sync-only chrome BEFORE the CSS swap to prevent layout flash */
+        var btt = document.getElementById('back-to-top');
+        var leg = document.querySelector('.legend');
+        if (!onSync) {
+          if (btt) { btt.classList.remove('visible'); btt.style.display = 'none'; }
+          if (leg) leg.style.display = 'none';
+        }
         var nc = doc.getElementById('page-content');
         var cc = document.getElementById('page-content');
         if (nc && cc) cc.innerHTML = nc.innerHTML;
         var ns = doc.getElementById('page-style');
         var cs = document.getElementById('page-style');
         if (ns && cs) cs.textContent = ns.textContent;
-        var newPath = new URL(url, location.origin).pathname;
         document.querySelectorAll('a.nav-link').forEach(function(a) {
           a.classList.toggle('active', new URL(a.href, location.origin).pathname === newPath);
         });
         document.title = doc.title || document.title;
         history.pushState({pjax: url}, '', url);
         window.scrollTo(0, 0);
-        /* show sync-only chrome only on the root Sync tab */
-        var onSync = newPath === '/';
-        var btt = document.getElementById('back-to-top');
-        var leg = document.querySelector('.legend');
+        /* restore sync-only chrome when returning to the Sync tab */
         if (onSync) {
           if (!btt) {
             var nb = doc.getElementById('back-to-top');
@@ -881,9 +886,6 @@
             var nl = doc.querySelector('.legend');
             if (nl) document.body.insertBefore(nl.cloneNode(true), document.body.firstChild);
           } else { leg.style.display = ''; }
-        } else {
-          if (btt) btt.style.display = 'none';
-          if (leg) leg.style.display = 'none';
         }
         var init = doc.getElementById('page-init');
         if (init) {
