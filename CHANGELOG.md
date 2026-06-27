@@ -8,18 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-- **Configurable refresh intervals** — both the Now Playing card and the Sync history card now expose a number input to set the auto-refresh interval. `0` enables live mode (1-second polling, shows `LIVE`), `-1` disables auto-refresh entirely (shows `OFF`), and any positive integer sets the interval in seconds with a live countdown. Settings persist across page loads and PJAX tab switches via `localStorage` (`servarr_np_interval` and `servarr_sync_interval`). The interval input also appears on the full `/now-playing` page and shares the same stored value as the mini dashboard widget.
-
-### Fixed
-- **Now Playing live mode flash** — in live mode the entire session card was being torn down and rebuilt on every 1-second tick, causing the map, artwork, and geo to flash. The renderer now does a full rebuild only on first load; subsequent calls patch only the dynamic fields in-place (state badge, progress bar, percentage, time remaining, stream type/quality/bitrate) while leaving the map, poster, IP, and geo untouched. Applies to both the full `/now-playing` page and the mini dashboard widget.
-- **`invites.html` PJAX back-to-top leak** — the Invites page PJAX handler was missing the back-to-top hide step entirely; it now hides both `#back-to-top` and `.legend` unconditionally before navigating away.
-- **Zero treated as disabled in refresh interval input** — typing `0` in a refresh interval input incorrectly mapped to `-1` (disabled) because `parseInt('0') || -1` evaluates `0` as falsy. Fixed by using `isNaN(v) ? -1 : v` so `0` correctly activates live mode.
-
-### CI
-- **CHANGELOG-driven releases** — `docker-publish.yml` now promotes `[Unreleased]` to a versioned heading on merge to `dev` (minor bump if `### Added` present, patch otherwise), commits it back with `[skip ci]`, and feeds the result to `mindsers/changelog-reader-action` + `softprops/action-gh-release` so release notes come directly from the changelog.
-- **Renovate auto-changelog** — new `changelog-renovate.yml` workflow appends a `### Changed` bullet to `[Unreleased]` whenever a Renovate PR is merged to `dev`.
-
 ---
 
 ## [v0.17.0] - 2026-06-27
