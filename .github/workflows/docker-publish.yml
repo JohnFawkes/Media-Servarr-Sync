@@ -51,7 +51,7 @@ jobs:
       # Promote [Unreleased] → [vX.Y.Z] and commit back — only on main/master
       - name: Promote Unreleased to versioned release
         id: promote
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         run: |
           python3 - <<'PYEOF'
           import re, datetime, os, sys
@@ -114,7 +114,7 @@ jobs:
           PYEOF
 
       - name: Commit promoted CHANGELOG
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -124,7 +124,7 @@ jobs:
             git push
 
       - name: Sync promoted CHANGELOG back to dev
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         run: |
           # Cherry-pick the promote commit onto dev so the [Unreleased] heading
           # on dev is replaced with the versioned release heading, keeping dev clean.
@@ -145,14 +145,14 @@ jobs:
 
       - name: Get Changelog Entry
         id: changelog_reader
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         uses: mindsers/changelog-reader-action@v2
         with:
           version: ${{ steps.promote.outputs.VERSION }}
           path: ./CHANGELOG.md
 
       - name: Build release body
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         env:
           CHANGES: ${{ steps.changelog_reader.outputs.changes }}
           PREV_VERSION: ${{ steps.promote.outputs.PREV_VERSION }}
@@ -174,7 +174,7 @@ jobs:
 
       - name: Create release
         id: create_release
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         uses: softprops/action-gh-release@v3
         with:
           body_path: /tmp/release_body.md

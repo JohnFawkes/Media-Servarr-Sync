@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Automated cleanup of untagged container versions** — a new workflow deletes untagged GHCR image layers after each release build and on a weekly schedule, keeping the package registry tidy.
 - **CHANGELOG sync from master back to dev after release** — the release workflow now cherry-picks the CHANGELOG promotion commit back onto `dev` immediately after stamping a version on `master`, so `dev` never retains stale `[Unreleased]` content from a previous release.
 
+### Fixed
+- **Docker build warnings silenced** — `DEBIAN_FRONTEND=noninteractive` suppresses debconf frontend noise during `apt-get`; pip dependencies are now installed into a virtualenv (`/app/.venv`) rather than the system Python, eliminating the root-user pip warning and properly isolating app dependencies.
+- **`workflow_dispatch` now triggers CHANGELOG promotion and release creation** — the promote step and all release steps were conditioned on `github.event_name == 'push'` only, so manually-triggered runs skipped the entire release flow. Added `|| github.event_name == 'workflow_dispatch'` to all six conditions.
+
 ---
 
 ## [v0.19.0] - 2026-06-27
