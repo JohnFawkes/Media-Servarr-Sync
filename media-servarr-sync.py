@@ -1175,6 +1175,9 @@ def process_webhook(data: dict, instance_type: str):
         mf = data.get('movieFile', {})
         if mf:
             quality, _ = _extract_file_meta(mf)
+            rp = mf.get('relativePath', '')
+            if rp:
+                episode = rp.replace('\\', '/').split('/')[-1]
 
     elif 'series' in data:
         series_path = data['series'].get('path', '')
