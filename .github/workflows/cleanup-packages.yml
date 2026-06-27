@@ -1,0 +1,32 @@
+name: Cleanup Untagged Package Versions
+
+# Runs after every push to main/master (i.e. after each release build tags a new image)
+# and on a weekly schedule to catch anything that slipped through.
+# Can also be triggered manually.
+on:
+  workflow_run:
+    workflows: ["Docker Build & Publish"]
+    branches: ["main", "master"]
+    types: [completed]
+
+  schedule:
+    - cron: "0 3 * * 0"   # every Sunday at 03:00 UTC
+
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Delete untagged package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: media-servarr-sync
+          package-type: container
+          delete-only-untagged-versions: true
+          # Keep the most recent 5 untagged digests in case a build is
+          # still in progress or a rollback is needed within the same day.
+          min-versions-to-keep: 5
