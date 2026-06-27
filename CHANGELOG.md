@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [v0.18.0] - 2026-06-27
 
 ### Fixed
 - **Movie filename missing from sync history** — Radarr webhooks were not storing the movie filename in history, so the sync entry showed only the folder path. The filename is now extracted from `movieFile.relativePath` and displayed below the path, consistent with Sonarr episode entries.
