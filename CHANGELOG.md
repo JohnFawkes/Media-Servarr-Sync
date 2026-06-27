@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [v0.20.0] - 2026-06-27
 
 ### Added
 - **Automated cleanup of untagged container versions** — a new workflow deletes untagged GHCR image layers after each release build and on a weekly schedule, keeping the package registry tidy.
