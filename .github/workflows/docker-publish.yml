@@ -1,7 +1,7 @@
 name: Docker Build & Publish
 
-# This workflow runs when a push is made to the default branch (usually main/master)
-# OR when a Pull Request is opened/updated against the default branch.
+# Builds and tests the Docker image on every push to dev/main/master and on PRs.
+# CHANGELOG promotion and GitHub releases only happen on push to main/master.
 on:
   push:
     branches: [ "main", "master", "dev" ]
@@ -48,10 +48,10 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      # Promote [Unreleased] → [vX.Y.Z] and commit back to the branch
+      # Promote [Unreleased] → [vX.Y.Z] and commit back — only on main/master
       - name: Promote Unreleased to versioned release
         id: promote
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         run: |
           python3 - <<'PYEOF'
           import re, datetime, os, sys
@@ -110,7 +110,7 @@ jobs:
           PYEOF
 
       - name: Commit promoted CHANGELOG
-        if: github.event_name == 'push' && steps.promote.outputs.VERSION != ''
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -121,7 +121,7 @@ jobs:
 
       - name: Get Changelog Entry
         id: changelog_reader
-        if: github.event_name == 'push' && steps.promote.outputs.VERSION != ''
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         uses: mindsers/changelog-reader-action@v2
         with:
           version: ${{ steps.promote.outputs.VERSION }}
@@ -129,7 +129,7 @@ jobs:
 
       - name: Create release
         id: create_release
-        if: github.event_name == 'push' && steps.promote.outputs.VERSION != ''
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.changelog_reader.outputs.changes }}
@@ -163,7 +163,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
             type=raw,value=${{ steps.promote.outputs.VERSION }},enable=${{ github.event_name == 'push' && steps.promote.outputs.VERSION != '' }}
             type=ref,event=branch
             type=ref,event=pr
