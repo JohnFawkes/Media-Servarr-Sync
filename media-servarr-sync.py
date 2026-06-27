@@ -1959,8 +1959,7 @@ def api_geoip():
                 out.pop('_ts', None)
                 return jsonify(_sanitize_floats(out))
     try:
-        url = urllib.parse.urljoin('https://ipinfo.io/', urllib.parse.quote(safe_ip, safe='') + '/json')
-        r = requests.get(url, timeout=5)
+        r = requests.get(f'https://ipinfo.io/{safe_ip}/json', timeout=5)
         raw = r.json()
         # Normalize ipinfo.io response to ip-api.com field names expected by the frontend
         lat, lon = None, None
