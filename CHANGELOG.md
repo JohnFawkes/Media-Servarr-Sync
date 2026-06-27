@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **Docker build warnings silenced** — `DEBIAN_FRONTEND=noninteractive` suppresses debconf frontend noise during `apt-get`; `--root-user-action=ignore` suppresses the pip root-user warning.
+- **`workflow_dispatch` now triggers CHANGELOG promotion and release creation** — the promote step and all release steps were conditioned on `github.event_name == 'push'` only, so manually-triggered runs skipped the entire release flow. Added `|| github.event_name == 'workflow_dispatch'` to all six conditions.
 
 ---
 
