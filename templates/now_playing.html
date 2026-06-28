@@ -375,19 +375,38 @@
       .then(function(r) { if (!r.ok) throw r; return r.text(); })
       .then(function(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newPath = new URL(url, location.origin).pathname;
+        var onSync = newPath === '/';
+        /* hide sync-only chrome before CSS swap to avoid layout flash */
+        var btt = document.getElementById('back-to-top');
+        var leg = document.querySelector('.legend');
+        if (!onSync) {
+          if (btt) { btt.classList.remove('visible'); btt.style.display = 'none'; }
+          if (leg) leg.style.display = 'none';
+        }
         var nc = doc.getElementById('page-content');
         var cc = document.getElementById('page-content');
         if (nc && cc) cc.innerHTML = nc.innerHTML;
         var ns = doc.getElementById('page-style');
         var cs = document.getElementById('page-style');
         if (ns && cs) cs.textContent = ns.textContent;
-        var newPath = new URL(url, location.origin).pathname;
         document.querySelectorAll('a.nav-link').forEach(function(a) {
           a.classList.toggle('active', new URL(a.href, location.origin).pathname === newPath);
         });
         document.title = doc.title || document.title;
         history.pushState({pjax: url}, '', url);
         window.scrollTo(0, 0);
+        /* restore sync-only chrome when returning to Sync tab */
+        if (onSync) {
+          if (!btt) {
+            var nb = doc.getElementById('back-to-top');
+            if (nb) document.body.insertBefore(nb.cloneNode(true), document.body.firstChild);
+          } else { btt.style.display = ''; }
+          if (!leg) {
+            var nl = doc.querySelector('.legend');
+            if (nl) document.body.insertBefore(nl.cloneNode(true), document.body.firstChild);
+          } else { leg.style.display = ''; }
+        }
         var init = doc.getElementById('page-init');
         if (init) {
           var s = document.createElement('script');
@@ -561,8 +580,18 @@
     }, 1000);
   }
 
-  doStatsRefresh();
-  startStatsCountdown();
+  function initStats() {
+    doStatsRefresh();
+    startStatsCountdown();
+  }
+  if (typeof Chart !== 'undefined') {
+    initStats();
+  } else {
+    var _cs = document.createElement('script');
+    _cs.src = '/static/chart.min.js';
+    _cs.onload = initStats;
+    document.head.appendChild(_cs);
+  }
   /* ---------- end server stats ---------- */
 
   window.__pjaxCleanup = function() {
