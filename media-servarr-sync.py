@@ -1709,10 +1709,17 @@ def api_server_stats():
         r = requests.get(
             f"{PLEX_URL}/statistics/resources",
             headers=_plex_headers,
+            params={"timespan": 6},
             timeout=5,
         )
         if r.ok:
-            items = r.json().get("MediaContainer", {}).get("StatisticsResources", [])
+            mc = r.json().get("MediaContainer", {})
+            # Plex nests StatisticsResources under a Device list
+            items = mc.get("StatisticsResources", [])
+            if not items:
+                for dev in mc.get("Device", []):
+                    items.extend(dev.get("StatisticsResources", []))
+            log.debug("/statistics/resources returned %d items; keys=%s", len(items), list(mc.keys()))
             if items:
                 latest = items[-1]
                 result["resources"] = {
@@ -1722,8 +1729,10 @@ def api_server_stats():
                     "process_ram_pct":  round(float(latest.get("processMemoryUtilization", 0)), 1),
                     "at":               latest.get("timespan", 0),
                 }
+        else:
+            log.debug("/statistics/resources HTTP %s: %s", r.status_code, r.text[:200])
     except Exception as exc:
-        log.debug("Failed to fetch /statistics/resources: %s", exc)
+        log.warning("Failed to fetch /statistics/resources: %s", exc)
 
     try:
         r = requests.get(
