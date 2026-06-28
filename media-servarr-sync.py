@@ -1703,11 +1703,12 @@ def api_server_stats():
     if plex is None:
         return jsonify({"error": "Plex unavailable"}), 503
 
+    _plex_headers = {"Accept": "application/json", "X-Plex-Token": PLEX_TOKEN}
     result = {"resources": None, "bandwidth": None}
     try:
         r = requests.get(
             f"{PLEX_URL}/statistics/resources",
-            params={"X-Plex-Token": PLEX_TOKEN},
+            headers=_plex_headers,
             timeout=5,
         )
         if r.ok:
@@ -1715,10 +1716,10 @@ def api_server_stats():
             if items:
                 latest = items[-1]
                 result["resources"] = {
-                    "host_cpu_pct":     round(latest.get("hostCpuUtilization", 0), 1),
-                    "process_cpu_pct":  round(latest.get("processCpuUtilization", 0), 1),
-                    "host_ram_pct":     round(latest.get("hostMemoryUtilization", 0), 1),
-                    "process_ram_pct":  round(latest.get("processMemoryUtilization", 0), 1),
+                    "host_cpu_pct":     round(float(latest.get("hostCpuUtilization", 0)), 1),
+                    "process_cpu_pct":  round(float(latest.get("processCpuUtilization", 0)), 1),
+                    "host_ram_pct":     round(float(latest.get("hostMemoryUtilization", 0)), 1),
+                    "process_ram_pct":  round(float(latest.get("processMemoryUtilization", 0)), 1),
                     "at":               latest.get("timespan", 0),
                 }
     except Exception as exc:
@@ -1727,13 +1728,14 @@ def api_server_stats():
     try:
         r = requests.get(
             f"{PLEX_URL}/statistics/bandwidth",
-            params={"X-Plex-Token": PLEX_TOKEN, "timespan": 6},
+            headers=_plex_headers,
+            params={"timespan": 6},
             timeout=5,
         )
         if r.ok:
             items = r.json().get("MediaContainer", {}).get("StatisticsBandwidth", [])
-            lan_bytes = sum(i.get("bytes", 0) for i in items if i.get("lan") is True)
-            wan_bytes = sum(i.get("bytes", 0) for i in items if i.get("lan") is False)
+            lan_bytes = sum(int(i.get("bytes", 0)) for i in items if i.get("lan") is True)
+            wan_bytes = sum(int(i.get("bytes", 0)) for i in items if i.get("lan") is False)
             total_bytes = lan_bytes + wan_bytes
             result["bandwidth"] = {
                 "lan_bytes": lan_bytes,
