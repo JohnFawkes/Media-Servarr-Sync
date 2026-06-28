@@ -135,21 +135,16 @@ jobs:
       - name: Sync promoted CHANGELOG back to dev
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && steps.promote.outputs.VERSION != ''
         run: |
-          # Cherry-pick the promote commit onto dev so the [Unreleased] heading
-          # on dev is replaced with the versioned release heading, keeping dev clean.
-          PROMO_SHA=$(git rev-parse HEAD)
+          # Copy master's promoted CHANGELOG directly onto dev so the versioned
+          # heading lands on dev without a cherry-pick 3-way merge, which would
+          # silently restore [Unreleased] on the next dev→master merge.
           git fetch origin dev
           git checkout dev
-
-          if git cherry-pick "$PROMO_SHA" --no-commit 2>/dev/null; then
-            git diff --staged --quiet && echo "Nothing to sync." || \
-              git commit -m "chore: sync CHANGELOG after ${{ steps.promote.outputs.VERSION }} release [skip ci]" && \
-              git push origin dev
-          else
-            git cherry-pick --abort 2>/dev/null || true
-            echo "Cherry-pick conflicted (dev has diverged) — CHANGELOG sync skipped."
-          fi
-
+          git pull origin dev
+          git checkout origin/master -- CHANGELOG.md
+          git diff --staged --quiet && echo "Nothing to sync." || \
+            git commit -m "chore: sync CHANGELOG after ${{ steps.promote.outputs.VERSION }} release [skip ci]" && \
+            git push origin dev
           git checkout ${{ github.ref_name }}
 
       - name: Get Changelog Entry
