@@ -117,6 +117,35 @@
   }
   .interval-input:hover, .interval-input:focus { border-color: var(--accent); color: var(--text); }
 
+  /* -------- Server Stats -------- */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 600px) { .stats-grid { grid-template-columns: 1fr; } }
+  .stat-chart-wrap {
+    position: relative;
+  }
+  .stat-chart-label {
+    font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .stat-chart-val {
+    font-size: 14px; font-weight: 600; color: var(--text); letter-spacing: 0;
+  }
+  .stat-chart-canvas { width: 100% !important; height: 80px !important; }
+  .bw-row {
+    display: flex; gap: 24px; flex-wrap: wrap;
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted);
+  }
+  .bw-item { display: flex; flex-direction: column; gap: 2px; }
+  .bw-val { font-size: 14px; color: var(--text); }
+  .stats-error { color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
+
   /* -------- Now Playing -------- */
   .np-empty {
     color: var(--muted); font-family: 'IBM Plex Mono', monospace;
@@ -309,6 +338,16 @@
     </div>
   </div>
 
+  <div class="card" id="server-stats-card">
+    <div class="card-label" style="display:flex;align-items:center;gap:6px;">
+      Server Stats
+      <span id="stats-countdown" style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.05em;min-width:28px;text-align:right;"></span>
+    </div>
+    <div id="server-stats-body">
+      <div class="stats-error">Loading…</div>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-label">Full Library Scan</div>
     <div class="input-row">
@@ -323,6 +362,7 @@
   </div>{# /page-content #}
 </div>
 
+<script src="/static/chart.min.js"></script>
 <script src="/static/leaflet.js"></script>
 <script>/* PJAX: intercept nav-link clicks, swap #page-content, re-run page-init */
 (function() {
@@ -381,8 +421,140 @@
   var npRendered = false;
   var PLEX_URL = {{ plex_url | tojson }};
 
+  /* ---------- server stats ---------- */
+  var STATS_INTERVAL = 10; // seconds
+  var statsTick, statsRemaining = STATS_INTERVAL;
+  var cpuChart = null, ramChart = null;
+  var cpuData = [], ramData = [], statsLabels = [];
+  var MAX_POINTS = 30; // 5-minute window at 10s
+
+  function fmtBytes(b) {
+    if (!b || b < 1024) return (b || 0) + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1073741824).toFixed(2) + ' GB';
+  }
+
+  function makeChart(ctx, label, color) {
+    return new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: label,
+          data: [],
+          borderColor: color,
+          backgroundColor: color.replace(')', ', 0.08)').replace('rgb', 'rgba'),
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: true,
+        }]
+      },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { display: false },
+          y: {
+            min: 0, max: 100,
+            ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 4, callback: function(v) { return v + '%'; } },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          }
+        },
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: { label: function(c) { return c.parsed.y.toFixed(1) + '%'; } }
+        }}
+      }
+    });
+  }
+
+  function renderStats(data) {
+    var body = document.getElementById('server-stats-body');
+    if (!body) return;
+    if (!data || (!data.resources && !data.bandwidth)) {
+      body.innerHTML = '<div class="stats-error">Stats unavailable</div>';
+      return;
+    }
+    if (!cpuChart) {
+      body.innerHTML =
+        '<div class="stats-grid">' +
+          '<div class="stat-chart-wrap">' +
+            '<div class="stat-chart-label">CPU <span class="stat-chart-val" id="cpu-val">—</span></div>' +
+            '<div style="height:80px"><canvas id="cpu-canvas"></canvas></div>' +
+          '</div>' +
+          '<div class="stat-chart-wrap">' +
+            '<div class="stat-chart-label">RAM <span class="stat-chart-val" id="ram-val">—</span></div>' +
+            '<div style="height:80px"><canvas id="ram-canvas"></canvas></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="bw-row" id="bw-row"></div>';
+      cpuChart = makeChart(document.getElementById('cpu-canvas').getContext('2d'), 'CPU', 'rgb(229,160,13)');
+      ramChart = makeChart(document.getElementById('ram-canvas').getContext('2d'), 'RAM', 'rgb(96,165,250)');
+    }
+    if (data.resources) {
+      var r = data.resources;
+      var cpuVal = r.host_cpu_pct;
+      var ramVal = r.host_ram_pct;
+      var now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      statsLabels.push(now); cpuData.push(cpuVal); ramData.push(ramVal);
+      if (statsLabels.length > MAX_POINTS) { statsLabels.shift(); cpuData.shift(); ramData.shift(); }
+      cpuChart.data.labels = statsLabels;
+      cpuChart.data.datasets[0].data = cpuData;
+      cpuChart.update('none');
+      ramChart.data.labels = statsLabels;
+      ramChart.data.datasets[0].data = ramData;
+      ramChart.update('none');
+      var cpuEl = document.getElementById('cpu-val');
+      var ramEl = document.getElementById('ram-val');
+      if (cpuEl) cpuEl.textContent = cpuVal.toFixed(1) + '%';
+      if (ramEl) ramEl.textContent = ramVal.toFixed(1) + '%';
+    }
+    if (data.bandwidth) {
+      var bw = data.bandwidth;
+      var bwEl = document.getElementById('bw-row');
+      if (bwEl) {
+        bwEl.innerHTML =
+          '<div class="bw-item"><span>LAN</span><span class="bw-val">' + fmtBytes(bw.lan_bytes) + '</span></div>' +
+          '<div class="bw-item"><span>WAN</span><span class="bw-val">' + fmtBytes(bw.wan_bytes) + '</span></div>' +
+          '<div class="bw-item"><span>Total</span><span class="bw-val">' + fmtBytes(bw.total_bytes) + '</span></div>';
+      }
+    }
+  }
+
+  function doStatsRefresh() {
+    fetch('/api/server-stats', {cache: 'no-store'})
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) { if (d) renderStats(d); })
+      .catch(function() {});
+  }
+
+  function startStatsCountdown() {
+    clearInterval(statsTick);
+    statsRemaining = STATS_INTERVAL;
+    var el = document.getElementById('stats-countdown');
+    if (el) el.textContent = statsRemaining + 's';
+    statsTick = setInterval(function() {
+      statsRemaining--;
+      if (el) el.textContent = statsRemaining + 's';
+      if (statsRemaining <= 0) {
+        statsRemaining = STATS_INTERVAL;
+        doStatsRefresh();
+      }
+    }, 1000);
+  }
+
+  doStatsRefresh();
+  startStatsCountdown();
+  /* ---------- end server stats ---------- */
+
   window.__pjaxCleanup = function() {
     clearInterval(npTick);
+    clearInterval(statsTick);
+    if (cpuChart) { cpuChart.destroy(); cpuChart = null; }
+    if (ramChart) { ramChart.destroy(); ramChart = null; }
+    cpuData = []; ramData = []; statsLabels = [];
     Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
     activeMaps = {};
     npRendered = false;

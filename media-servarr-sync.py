@@ -1692,6 +1692,57 @@ def now_playing():
     return render_template('now_playing.html', sessions=sessions, demo=demo, plex_url=PLEX_URL)
 
 
+@app.route('/api/server-stats', methods=['GET'])
+@requires_auth
+def api_server_stats():
+    """Return Plex server CPU, RAM, and bandwidth stats."""
+    plex = get_plex()
+    if plex is None:
+        return jsonify({"error": "Plex unavailable"}), 503
+
+    result = {"resources": None, "bandwidth": None}
+    try:
+        r = requests.get(
+            f"{PLEX_URL}/statistics/resources",
+            params={"X-Plex-Token": PLEX_TOKEN},
+            timeout=5,
+        )
+        if r.ok:
+            items = r.json().get("MediaContainer", {}).get("StatisticsResources", [])
+            if items:
+                latest = items[-1]
+                result["resources"] = {
+                    "host_cpu_pct":     round(latest.get("hostCpuUtilization", 0), 1),
+                    "process_cpu_pct":  round(latest.get("processCpuUtilization", 0), 1),
+                    "host_ram_pct":     round(latest.get("hostMemoryUtilization", 0), 1),
+                    "process_ram_pct":  round(latest.get("processMemoryUtilization", 0), 1),
+                    "at":               latest.get("timespan", 0),
+                }
+    except Exception as exc:
+        log.debug("Failed to fetch /statistics/resources: %s", exc)
+
+    try:
+        r = requests.get(
+            f"{PLEX_URL}/statistics/bandwidth",
+            params={"X-Plex-Token": PLEX_TOKEN, "timespan": 6},
+            timeout=5,
+        )
+        if r.ok:
+            items = r.json().get("MediaContainer", {}).get("StatisticsBandwidth", [])
+            lan_bytes = sum(i.get("bytes", 0) for i in items if i.get("lan") is True)
+            wan_bytes = sum(i.get("bytes", 0) for i in items if i.get("lan") is False)
+            total_bytes = lan_bytes + wan_bytes
+            result["bandwidth"] = {
+                "lan_bytes": lan_bytes,
+                "wan_bytes": wan_bytes,
+                "total_bytes": total_bytes,
+            }
+    except Exception as exc:
+        log.debug("Failed to fetch /statistics/bandwidth: %s", exc)
+
+    return jsonify(result)
+
+
 @app.route('/health', methods=['GET'])
 def health():
     plex_ok = get_plex() is not None

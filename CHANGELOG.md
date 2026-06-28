@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Plex server stats on Now Playing page** — a new Server Stats card shows live CPU % and RAM % rolling line charts (30-point / 5-minute window, polled every 10 s via `/statistics/resources`) plus current LAN, WAN, and total bandwidth from `/statistics/bandwidth`. Chart.js is bundled locally under `static/chart.min.js`.
+
+---
+
 ## [v0.20.1] - 2026-06-27
 
 ### Fixed
