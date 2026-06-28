@@ -2109,6 +2109,7 @@ def api_libraries():
 
 
 _TILE_CACHE_DIR = "/data/tile_cache"
+_TILE_CACHE_REAL = os.path.realpath(_TILE_CACHE_DIR)
 _PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
 _TILE_MAX_AGE = 86400  # 24 h
 
@@ -2120,8 +2121,12 @@ def api_maptile(z, x, y):
     if not (0 <= z <= 19 and 0 <= x < 2**z and 0 <= y < 2**z):
         return '', 400
 
-    # Build a safe cache path using only validated integer coordinates.
-    cache_path = os.path.join(_TILE_CACHE_DIR, str(z), str(x), f"{y}.png")
+    # Resolve the cache path and confirm it stays within _TILE_CACHE_DIR.
+    # os.path.realpath + startswith is CodeQL's recognised path-injection sanitizer.
+    candidate = os.path.realpath(os.path.join(_TILE_CACHE_DIR, str(z), str(x), f"{y}.png"))
+    if not candidate.startswith(_TILE_CACHE_REAL + os.sep):
+        return '', 400
+    cache_path = candidate
 
     # Serve from disk cache if the file exists and is fresh.
     if os.path.isfile(cache_path) and (time.time() - os.path.getmtime(cache_path)) < _TILE_MAX_AGE:
@@ -2137,8 +2142,8 @@ def api_maptile(z, x, y):
         if data[:8] != _PNG_MAGIC:
             log.debug("Map tile response is not a valid PNG %s/%s/%s", z, x, y)
             return '', 502
-        # Write validated PNG to disk; subsequent requests are served from the
-        # cache file, fully decoupling the HTTP response from upstream content.
+        # Write validated PNG to disk; all responses are served from the
+        # cache file, decoupling the HTTP response from upstream content.
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         with open(cache_path, 'wb') as fh:
             fh.write(data)
