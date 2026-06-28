@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [v0.21.0] - 2026-06-28
 
 ### Added
 - **Plex server stats on Now Playing page** — a new Server Stats card shows live rolling line charts for CPU % and RAM %, each with two lines: **System** (host) and **Plex process**. Charts poll `/statistics/resources` every 10 s and display a 5-minute / 30-point rolling window. Current LAN, WAN, and total bandwidth from `/statistics/bandwidth` is shown below the charts. Chart.js 4.4.4 is bundled locally under `static/chart.min.js` (no CDN dependency). A new `/api/server-stats` route (session-authenticated) proxies both Plex endpoints.
