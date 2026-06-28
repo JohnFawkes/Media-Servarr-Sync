@@ -32,7 +32,8 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Filterable tags** — click any quality or profile tag to filter the history list to matching entries; active filters appear as dismissible pills in the filter bar and are preserved across search and pagination
 - **Tag colour legend** — a fixed panel on the left of the Sync UI explains what each tag colour means; hidden automatically on narrow viewports
 - **Configurable auto-refresh** — set the refresh interval for Now Playing and Sync history independently via a number input on each card; `0` = live (1-second polling), `-1` = off, any positive integer = interval in seconds with a live countdown. Preference persists in `localStorage` across page loads and tab switches
-- **Now Playing** — dedicated tab showing all active Plex streams with player info, artwork, progress bar, stream quality, and an interactive map showing the player's approximate location
+- **Now Playing** — dedicated tab showing all active Plex streams with player info, artwork, progress bar, stream quality (including **HW Transcode** detection), and an interactive map showing the player's approximate location
+- **Server stats** — live CPU % and RAM % rolling charts (System vs Plex process, 5-minute window) and current LAN/WAN bandwidth, powered by the Plex `/statistics/resources` and `/statistics/bandwidth` APIs; polled every 10 s with no external CDN
 - **Full library scan** — trigger a full Plex section scan from the Now Playing page via a library selector dropdown
 - **Invite management** — create time-limited invite links for new Plex users; configure allowed libraries, permissions, max uses, and expiry; track and revoke accepted invites
 - **Single-page navigation** — tab switching uses PJAX (in-place content swap) with no full page reload
@@ -182,6 +183,7 @@ SECTION_MAPPING={ "/mnt/media/tv": "1", "/mnt/media/movies": "2" }
 | `/invite/<token>` | GET | None | Public invite landing page |
 | `/health` | GET | None | JSON health check + recent history |
 | `/api/stats` | GET | None | Aggregate sync stats for dashboards |
+| `/api/server-stats` | GET | Session | Plex server CPU, RAM, and bandwidth stats |
 
 ### Health response example
 

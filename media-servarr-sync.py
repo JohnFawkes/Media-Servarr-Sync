@@ -1656,9 +1656,13 @@ def now_playing():
                     progress_pct = round(view_offset / duration * 100, 1) if duration else 0
                     if ts:
                         vd = getattr(ts, 'videoDecision', 'directplay')
-                        stream_type = {'directplay': 'Direct Play', 'copy': 'Direct Stream',
-                                       'transcode': 'Transcode'}.get(vd, 'Direct Play')
+                        ad = getattr(ts, 'audioDecision', 'directplay')
                         transcode = vd == 'transcode'
+                        hw = transcode and (getattr(ts, 'transcodeHwEncoding', False) or getattr(ts, 'transcodeHwRequested', False))
+                        _DEC = {'directplay': 'Direct Play', 'copy': 'Direct Stream', 'transcode': 'Transcode'}
+                        video_label = ('HW Transcode' if hw else _DEC.get(vd, 'Direct Play'))
+                        audio_label = _DEC.get(ad, 'Direct Play')
+                        stream_type = video_label if video_label == audio_label else f"{video_label} · Audio {audio_label}"
                     else:
                         stream_type, transcode = 'Direct Play', False
                     quality = ''
@@ -1690,6 +1694,68 @@ def now_playing():
         except Exception as exc:
             log.warning("Failed to fetch Plex sessions for /now-playing: %s", exc)
     return render_template('now_playing.html', sessions=sessions, demo=demo, plex_url=PLEX_URL)
+
+
+@app.route('/api/server-stats', methods=['GET'])
+@requires_auth
+def api_server_stats():
+    """Return Plex server CPU, RAM, and bandwidth stats."""
+    plex = get_plex()
+    if plex is None:
+        return jsonify({"error": "Plex unavailable"}), 503
+
+    _plex_headers = {"Accept": "application/json", "X-Plex-Token": PLEX_TOKEN}
+    result = {"resources": None, "bandwidth": None}
+    try:
+        r = requests.get(
+            f"{PLEX_URL}/statistics/resources",
+            headers=_plex_headers,
+            params={"timespan": 6},
+            timeout=5,
+        )
+        if r.ok:
+            mc = r.json().get("MediaContainer", {})
+            # Plex nests StatisticsResources under a Device list
+            items = mc.get("StatisticsResources", [])
+            if not items:
+                for dev in mc.get("Device", []):
+                    items.extend(dev.get("StatisticsResources", []))
+            log.debug("/statistics/resources returned %d items; keys=%s", len(items), list(mc.keys()))
+            if items:
+                latest = items[-1]
+                result["resources"] = {
+                    "host_cpu_pct":     round(float(latest.get("hostCpuUtilization", 0)), 1),
+                    "process_cpu_pct":  round(float(latest.get("processCpuUtilization", 0)), 1),
+                    "host_ram_pct":     round(float(latest.get("hostMemoryUtilization", 0)), 1),
+                    "process_ram_pct":  round(float(latest.get("processMemoryUtilization", 0)), 1),
+                    "at":               latest.get("timespan", 0),
+                }
+        else:
+            log.debug("/statistics/resources HTTP %s: %s", r.status_code, r.text[:200])
+    except Exception as exc:
+        log.warning("Failed to fetch /statistics/resources: %s", exc)
+
+    try:
+        r = requests.get(
+            f"{PLEX_URL}/statistics/bandwidth",
+            headers=_plex_headers,
+            params={"timespan": 6},
+            timeout=5,
+        )
+        if r.ok:
+            items = r.json().get("MediaContainer", {}).get("StatisticsBandwidth", [])
+            lan_bytes = sum(int(i.get("bytes", 0)) for i in items if i.get("lan") is True)
+            wan_bytes = sum(int(i.get("bytes", 0)) for i in items if i.get("lan") is False)
+            total_bytes = lan_bytes + wan_bytes
+            result["bandwidth"] = {
+                "lan_bytes": lan_bytes,
+                "wan_bytes": wan_bytes,
+                "total_bytes": total_bytes,
+            }
+    except Exception as exc:
+        log.debug("Failed to fetch /statistics/bandwidth: %s", exc)
+
+    return jsonify(result)
 
 
 @app.route('/health', methods=['GET'])
@@ -1812,11 +1878,12 @@ def api_sessions():
 
             if ts:
                 vd = getattr(ts, 'videoDecision', 'directplay')
-                stream_type = {
-                    'directplay': 'Direct Play',
-                    'copy': 'Direct Stream',
-                    'transcode': 'Transcode',
-                }.get(vd, vd.title() if vd else 'Direct Play')
+                ad = getattr(ts, 'audioDecision', 'directplay')
+                hw = vd == 'transcode' and (getattr(ts, 'transcodeHwEncoding', False) or getattr(ts, 'transcodeHwRequested', False))
+                _DEC = {'directplay': 'Direct Play', 'copy': 'Direct Stream', 'transcode': 'Transcode'}
+                video_label = 'HW Transcode' if hw else _DEC.get(vd, vd.title() if vd else 'Direct Play')
+                audio_label = _DEC.get(ad, ad.title() if ad else 'Direct Play')
+                stream_type = video_label if video_label == audio_label else f"{video_label} · Audio {audio_label}"
             else:
                 stream_type = 'Direct Play'
 
