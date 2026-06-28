@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import plexapi
 from waitress import serve
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response, send_file
 from flask_wtf.csrf import CSRFProtect
 from dotenv import load_dotenv
 from plexapi.server import PlexServer
@@ -2108,27 +2108,42 @@ def api_libraries():
         return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 500
 
 
+_TILE_CACHE_DIR = "/data/tile_cache"
+_PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
+_TILE_MAX_AGE = 86400  # 24 h
+
+
 @app.route('/api/maptile/<int:z>/<int:x>/<int:y>.png')
 @requires_auth
 def api_maptile(z, x, y):
-    """Proxy OpenStreetMap tiles server-side so the browser never needs direct OSM access."""
+    """Proxy and cache OpenStreetMap tiles server-side (24 h disk cache)."""
     if not (0 <= z <= 19 and 0 <= x < 2**z and 0 <= y < 2**z):
         return '', 400
+
+    # Build a safe cache path using only validated integer coordinates.
+    cache_path = os.path.join(_TILE_CACHE_DIR, str(z), str(x), f"{y}.png")
+
+    # Serve from disk cache if the file exists and is fresh.
+    if os.path.isfile(cache_path) and (time.time() - os.path.getmtime(cache_path)) < _TILE_MAX_AGE:
+        return send_file(cache_path, mimetype='image/png',
+                         max_age=_TILE_MAX_AGE, conditional=True)
+
     url = f"https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    _PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
     try:
         r = requests.get(url, timeout=10, headers={'User-Agent': 'media-servarr-sync/1.0'})
         if not r.ok:
             return '', r.status_code
         data = r.content
-        if not data[:8] == _PNG_MAGIC:
+        if data[:8] != _PNG_MAGIC:
             log.debug("Map tile response is not a valid PNG %s/%s/%s", z, x, y)
             return '', 502
-        resp = make_response(data)
-        resp.headers['Content-Type'] = 'image/png'
-        resp.headers['Cache-Control'] = 'public, max-age=86400'
-        resp.headers['X-Content-Type-Options'] = 'nosniff'
-        return resp
+        # Write validated PNG to disk; subsequent requests are served from the
+        # cache file, fully decoupling the HTTP response from upstream content.
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, 'wb') as fh:
+            fh.write(data)
+        return send_file(cache_path, mimetype='image/png',
+                         max_age=_TILE_MAX_AGE, conditional=True)
     except Exception as exc:
         log.debug("Map tile fetch failed %s/%s/%s: %s", z, x, y, exc)
         return '', 502

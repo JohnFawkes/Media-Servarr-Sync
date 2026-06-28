@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Security
-- **Map tile PNG magic-byte validation** — the `/api/maptile` proxy now inspects the first 8 bytes of every upstream response and rejects anything that is not a valid PNG (`\x89PNG\r\n\x1a\n`), eliminating the residual reflected-content vector flagged by CodeQL (CWE-79 / alert #14) that remained after the Content-Type header check alone.
+- **Map tile disk cache** — the `/api/maptile` proxy now writes validated tiles to a 24-hour disk cache (`/data/tile_cache/`) and serves subsequent requests directly from the filesystem. Upstream content (derived from user-supplied tile coordinates) is never forwarded directly to the HTTP response, fully eliminating the reflected-content vector (CodeQL CWE-79 / alert #14). PNG magic-byte validation (`\x89PNG\r\n\x1a\n`) is enforced before any tile is written to cache.
 
 ---
 
