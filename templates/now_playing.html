@@ -491,38 +491,41 @@
     });
   }
 
+  function initStatsUI() {
+    var body = document.getElementById('server-stats-body');
+    if (!body || cpuChart) return;
+    body.innerHTML =
+      '<div class="stats-grid">' +
+        '<div class="stat-chart-wrap">' +
+          '<div class="stat-chart-label">CPU' +
+            '<span style="margin-left:auto;display:flex;gap:12px;">' +
+              '<span>System <span class="stat-chart-val" id="cpu-host-val">—</span></span>' +
+              '<span>Plex <span class="stat-chart-val" id="cpu-plex-val">—</span></span>' +
+            '</span>' +
+          '</div>' +
+          '<div style="height:90px"><canvas id="cpu-canvas"></canvas></div>' +
+        '</div>' +
+        '<div class="stat-chart-wrap">' +
+          '<div class="stat-chart-label">RAM' +
+            '<span style="margin-left:auto;display:flex;gap:12px;">' +
+              '<span>System <span class="stat-chart-val" id="ram-host-val">—</span></span>' +
+              '<span>Plex <span class="stat-chart-val" id="ram-plex-val">—</span></span>' +
+            '</span>' +
+          '</div>' +
+          '<div style="height:90px"><canvas id="ram-canvas"></canvas></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="bw-row" id="bw-row"></div>';
+    cpuChart = makeChart(document.getElementById('cpu-canvas').getContext('2d'), 'rgb(229,160,13)', 'rgb(251,146,60)');
+    ramChart = makeChart(document.getElementById('ram-canvas').getContext('2d'), 'rgb(96,165,250)', 'rgb(167,139,250)');
+  }
+
   function renderStats(data) {
     var body = document.getElementById('server-stats-body');
     if (!body) return;
     if (!data || (!data.resources && !data.bandwidth)) {
-      body.innerHTML = '<div class="stats-error">Stats unavailable</div>';
+      if (!cpuChart) body.innerHTML = '<div class="stats-error">Stats unavailable</div>';
       return;
-    }
-    if (!cpuChart) {
-      body.innerHTML =
-        '<div class="stats-grid">' +
-          '<div class="stat-chart-wrap">' +
-            '<div class="stat-chart-label">CPU' +
-              '<span style="margin-left:auto;display:flex;gap:12px;">' +
-                '<span>System <span class="stat-chart-val" id="cpu-host-val">—</span></span>' +
-                '<span>Plex <span class="stat-chart-val" id="cpu-plex-val">—</span></span>' +
-              '</span>' +
-            '</div>' +
-            '<div style="height:90px"><canvas id="cpu-canvas"></canvas></div>' +
-          '</div>' +
-          '<div class="stat-chart-wrap">' +
-            '<div class="stat-chart-label">RAM' +
-              '<span style="margin-left:auto;display:flex;gap:12px;">' +
-                '<span>System <span class="stat-chart-val" id="ram-host-val">—</span></span>' +
-                '<span>Plex <span class="stat-chart-val" id="ram-plex-val">—</span></span>' +
-              '</span>' +
-            '</div>' +
-            '<div style="height:90px"><canvas id="ram-canvas"></canvas></div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="bw-row" id="bw-row"></div>';
-      cpuChart = makeChart(document.getElementById('cpu-canvas').getContext('2d'), 'rgb(229,160,13)', 'rgb(251,146,60)');
-      ramChart = makeChart(document.getElementById('ram-canvas').getContext('2d'), 'rgb(96,165,250)', 'rgb(167,139,250)');
     }
     if (data.resources) {
       var r = data.resources;
@@ -581,6 +584,7 @@
   }
 
   function initStats() {
+    initStatsUI();
     doStatsRefresh();
     startStatsCountdown();
   }
