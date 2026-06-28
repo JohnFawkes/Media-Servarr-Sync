@@ -2063,6 +2063,26 @@ def api_libraries():
         return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 500
 
 
+@app.route('/api/maptile/<int:z>/<int:x>/<int:y>.png')
+@requires_auth
+def api_maptile(z, x, y):
+    """Proxy OpenStreetMap tiles server-side so the browser never needs direct OSM access."""
+    if not (0 <= z <= 19 and 0 <= x < 2**z and 0 <= y < 2**z):
+        return '', 400
+    url = f"https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    try:
+        r = requests.get(url, timeout=10, headers={'User-Agent': 'media-servarr-sync/1.0'})
+        if not r.ok:
+            return '', r.status_code
+        resp = make_response(r.content)
+        resp.headers['Content-Type'] = 'image/png'
+        resp.headers['Cache-Control'] = 'public, max-age=86400'
+        return resp
+    except Exception as exc:
+        log.debug("Map tile fetch failed %s/%s/%s: %s", z, x, y, exc)
+        return '', 502
+
+
 @app.route('/api/geoip')
 @requires_auth
 def api_geoip():

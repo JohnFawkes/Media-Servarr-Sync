@@ -834,7 +834,7 @@
             scrollWheelZoom: false, dragging: false,
             touchZoom: false, doubleClickZoom: false,
           });
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+          L.tileLayer('/api/maptile/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
           L.circleMarker([geo.lat, geo.lon], {
             radius: 7, color: '#e5a00d', fillColor: '#e5a00d', fillOpacity: 0.9, weight: 2
           }).bindTooltip(location, {permanent: false, direction: 'top'}).addTo(map);
