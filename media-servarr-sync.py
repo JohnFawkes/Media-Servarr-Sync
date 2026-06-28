@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import plexapi
 from waitress import serve
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response, send_file
 from flask_wtf.csrf import CSRFProtect
 from dotenv import load_dotenv
 from plexapi.server import PlexServer
@@ -2108,26 +2108,47 @@ def api_libraries():
         return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 500
 
 
+_TILE_CACHE_DIR = "/data/tile_cache"
+_TILE_CACHE_REAL = os.path.realpath(_TILE_CACHE_DIR)
+_PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
+_TILE_MAX_AGE = 86400  # 24 h
+
+
 @app.route('/api/maptile/<int:z>/<int:x>/<int:y>.png')
 @requires_auth
 def api_maptile(z, x, y):
-    """Proxy OpenStreetMap tiles server-side so the browser never needs direct OSM access."""
+    """Proxy and cache OpenStreetMap tiles server-side (24 h disk cache)."""
     if not (0 <= z <= 19 and 0 <= x < 2**z and 0 <= y < 2**z):
         return '', 400
+
+    # Resolve the cache path and confirm it stays within _TILE_CACHE_DIR.
+    # os.path.realpath + startswith is CodeQL's recognised path-injection sanitizer.
+    candidate = os.path.realpath(os.path.join(_TILE_CACHE_DIR, str(z), str(x), f"{y}.png"))
+    if not candidate.startswith(_TILE_CACHE_REAL + os.sep):
+        return '', 400
+    cache_path = candidate
+
+    # Serve from disk cache if the file exists and is fresh.
+    if os.path.isfile(cache_path) and (time.time() - os.path.getmtime(cache_path)) < _TILE_MAX_AGE:
+        return send_file(cache_path, mimetype='image/png',
+                         max_age=_TILE_MAX_AGE, conditional=True)
+
     url = f"https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     try:
         r = requests.get(url, timeout=10, headers={'User-Agent': 'media-servarr-sync/1.0'})
         if not r.ok:
             return '', r.status_code
-        ct = r.headers.get('Content-Type', '')
-        if not ct.startswith('image/'):
-            log.debug("Map tile unexpected content-type %s/%s/%s: %s", z, x, y, ct)
+        data = r.content
+        if data[:8] != _PNG_MAGIC:
+            log.debug("Map tile response is not a valid PNG %s/%s/%s", z, x, y)
             return '', 502
-        resp = make_response(r.content)
-        resp.headers['Content-Type'] = 'image/png'
-        resp.headers['Cache-Control'] = 'public, max-age=86400'
-        resp.headers['X-Content-Type-Options'] = 'nosniff'
-        return resp
+        # Write validated PNG to disk; all responses are served from the
+        # cache file, decoupling the HTTP response from upstream content.
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, 'wb') as fh:
+            fh.write(data)
+        return send_file(cache_path, mimetype='image/png',
+                         max_age=_TILE_MAX_AGE, conditional=True)
     except Exception as exc:
         log.debug("Map tile fetch failed %s/%s/%s: %s", z, x, y, exc)
         return '', 502
