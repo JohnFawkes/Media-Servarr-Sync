@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Mobile tag legend** — the Tag Legend (quality profile, quality, custom format badges) was hidden on screens narrower than 1000px. It now renders as an inline horizontal row above the filter bar on mobile, replacing the desktop fixed sidebar which had no room on small screens.
+
 ---
 
 ## [v0.21.2] - 2026-06-28
