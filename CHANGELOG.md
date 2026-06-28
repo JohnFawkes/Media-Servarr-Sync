@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Security
+- **Map tile disk cache** — the `/api/maptile` proxy now writes validated tiles to a 24-hour disk cache (`/data/tile_cache/`) and serves subsequent requests directly from the filesystem. Upstream content (derived from user-supplied tile coordinates) is never forwarded directly to the HTTP response, fully eliminating the reflected-content vector (CodeQL CWE-79 / alert #14). PNG magic-byte validation (`\x89PNG\r\n\x1a\n`) is enforced before any tile is written to cache.
+
+---
+
 ## [v0.21.1] - 2026-06-28
 
 ### Security
