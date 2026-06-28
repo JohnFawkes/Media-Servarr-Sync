@@ -1656,12 +1656,13 @@ def now_playing():
                     progress_pct = round(view_offset / duration * 100, 1) if duration else 0
                     if ts:
                         vd = getattr(ts, 'videoDecision', 'directplay')
+                        ad = getattr(ts, 'audioDecision', 'directplay')
                         transcode = vd == 'transcode'
-                        if transcode and (getattr(ts, 'transcodeHwEncoding', False) or getattr(ts, 'transcodeHwRequested', False)):
-                            stream_type = 'HW Transcode'
-                        else:
-                            stream_type = {'directplay': 'Direct Play', 'copy': 'Direct Stream',
-                                           'transcode': 'Transcode'}.get(vd, 'Direct Play')
+                        hw = transcode and (getattr(ts, 'transcodeHwEncoding', False) or getattr(ts, 'transcodeHwRequested', False))
+                        _DEC = {'directplay': 'Direct Play', 'copy': 'Direct Stream', 'transcode': 'Transcode'}
+                        video_label = ('HW Transcode' if hw else _DEC.get(vd, 'Direct Play'))
+                        audio_label = _DEC.get(ad, 'Direct Play')
+                        stream_type = video_label if video_label == audio_label else f"{video_label} · Audio {audio_label}"
                     else:
                         stream_type, transcode = 'Direct Play', False
                     quality = ''
@@ -1877,14 +1878,12 @@ def api_sessions():
 
             if ts:
                 vd = getattr(ts, 'videoDecision', 'directplay')
-                if vd == 'transcode' and (getattr(ts, 'transcodeHwEncoding', False) or getattr(ts, 'transcodeHwRequested', False)):
-                    stream_type = 'HW Transcode'
-                else:
-                    stream_type = {
-                        'directplay': 'Direct Play',
-                        'copy': 'Direct Stream',
-                        'transcode': 'Transcode',
-                    }.get(vd, vd.title() if vd else 'Direct Play')
+                ad = getattr(ts, 'audioDecision', 'directplay')
+                hw = vd == 'transcode' and (getattr(ts, 'transcodeHwEncoding', False) or getattr(ts, 'transcodeHwRequested', False))
+                _DEC = {'directplay': 'Direct Play', 'copy': 'Direct Stream', 'transcode': 'Transcode'}
+                video_label = 'HW Transcode' if hw else _DEC.get(vd, vd.title() if vd else 'Direct Play')
+                audio_label = _DEC.get(ad, ad.title() if ad else 'Direct Play')
+                stream_type = video_label if video_label == audio_label else f"{video_label} · Audio {audio_label}"
             else:
                 stream_type = 'Direct Play'
 

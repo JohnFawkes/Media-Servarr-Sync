@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **HW Transcode now labelled correctly** — streams that use hardware transcoding (where Plex sets `transcodeHwEncoding` or `transcodeHwRequested`) now display as **HW Transcode** instead of the generic **Transcode** in the Now Playing stream quality row.
+- **Audio transcode now shown separately** — when video and audio decisions differ (e.g. video Direct Stream + audio Transcode), the quality row now shows both, e.g. `Direct Stream · Audio Transcode`, matching the Plex dashboard behaviour.
 
 ---
 
