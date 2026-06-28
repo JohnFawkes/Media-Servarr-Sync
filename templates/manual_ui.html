@@ -13,7 +13,6 @@
 <meta name="apple-mobile-web-app-title" content="ServarrSync">
 <link rel="apple-touch-icon" href="/static/icon.svg">
 <link rel="stylesheet" href="/static/fonts.css">
-<link rel="stylesheet" href="/static/leaflet.css">
 <style id="page-style">
 
   :root {
@@ -609,9 +608,6 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
-  /* Leaflet overrides for dark theme */
-  .leaflet-tile { filter: brightness(0.6) invert(1) hue-rotate(180deg) saturate(0.5); }
-  .leaflet-container { background: #1a1a1f; }
 </style>
 </head>
 <body>
@@ -883,7 +879,6 @@
   </div>
   </div>{# /page-content #}
 </div>
-<script src="/static/leaflet.js"></script>
 <script>/* PJAX: intercept nav-link clicks, swap #page-content, re-run page-init */
 (function() {
   function pjaxLoad(url) {
@@ -952,12 +947,10 @@
 </script>
 <script id="page-init">
 (function() {
-  var tick = null, npTick = null, activeMaps = {}, npRendered = false;
+  var tick = null, npTick = null, npRendered = false;
 
   window.__pjaxCleanup = function() {
     clearInterval(tick); clearInterval(npTick);
-    Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
-    activeMaps = {};
     npRendered = false;
     window.onscroll = null;
   };
@@ -1120,7 +1113,6 @@
     container.querySelectorAll('.np-session[data-sid]').forEach(function(row) {
       var sid = row.getAttribute('data-sid');
       if (!incoming[sid]) {
-        if (activeMaps[sid]) { try { activeMaps[sid].remove(); } catch(e) {} delete activeMaps[sid]; }
         row.remove();
       }
     });
@@ -1174,12 +1166,10 @@
       }
       if (geo.status==='success' && geo.lat && geo.lon) {
         if (geoEl) geoEl.textContent = '· '+[geo.city,geo.country].filter(Boolean).join(', ');
-        if (mapEl && typeof L!=='undefined') {
-          mapEl.style.height = '120px';
-          var map = L.map(mapId, {center:[geo.lat,geo.lon],zoom:7,zoomControl:false,attributionControl:false,scrollWheelZoom:false,dragging:false,touchZoom:false,doubleClickZoom:false});
-          L.tileLayer('/api/maptile/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
-          L.circleMarker([geo.lat,geo.lon],{radius:6,color:'#e5a00d',fillColor:'#e5a00d',fillOpacity:0.9,weight:2}).addTo(map);
-          activeMaps[sessionId] = map;
+        if (mapEl) {
+          var bbox = (geo.lon-1.5)+','+(geo.lat-1)+','+(geo.lon+1.5)+','+(geo.lat+1);
+          var src = 'https://www.openstreetmap.org/export/embed.html?bbox='+bbox+'&layer=mapnik&marker='+geo.lat+','+geo.lon;
+          mapEl.innerHTML = '<iframe src="'+src+'" style="width:100%;height:120px;border:none;border-radius:3px;" loading="lazy"></iframe>';
         }
       }
     } catch(e) {}
