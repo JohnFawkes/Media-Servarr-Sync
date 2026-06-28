@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [v0.21.1] - 2026-06-28
 
 ### Security
 - **Map tile proxy content-type validation** — the `/api/maptile` route now rejects upstream responses whose `Content-Type` is not `image/*` and sets `X-Content-Type-Options: nosniff` on all tile responses, preventing a compromised or MITM'd upstream from injecting HTML/JS into a proxied response (CodeQL CWE-79 / alert #14).
