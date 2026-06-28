@@ -2115,15 +2115,16 @@ def api_maptile(z, x, y):
     if not (0 <= z <= 19 and 0 <= x < 2**z and 0 <= y < 2**z):
         return '', 400
     url = f"https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    _PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
     try:
         r = requests.get(url, timeout=10, headers={'User-Agent': 'media-servarr-sync/1.0'})
         if not r.ok:
             return '', r.status_code
-        ct = r.headers.get('Content-Type', '')
-        if not ct.startswith('image/'):
-            log.debug("Map tile unexpected content-type %s/%s/%s: %s", z, x, y, ct)
+        data = r.content
+        if not data[:8] == _PNG_MAGIC:
+            log.debug("Map tile response is not a valid PNG %s/%s/%s", z, x, y)
             return '', 502
-        resp = make_response(r.content)
+        resp = make_response(data)
         resp.headers['Content-Type'] = 'image/png'
         resp.headers['Cache-Control'] = 'public, max-age=86400'
         resp.headers['X-Content-Type-Options'] = 'nosniff'
