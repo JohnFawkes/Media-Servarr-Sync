@@ -2119,9 +2119,14 @@ def api_maptile(z, x, y):
         r = requests.get(url, timeout=10, headers={'User-Agent': 'media-servarr-sync/1.0'})
         if not r.ok:
             return '', r.status_code
+        ct = r.headers.get('Content-Type', '')
+        if not ct.startswith('image/'):
+            log.debug("Map tile unexpected content-type %s/%s/%s: %s", z, x, y, ct)
+            return '', 502
         resp = make_response(r.content)
         resp.headers['Content-Type'] = 'image/png'
         resp.headers['Cache-Control'] = 'public, max-age=86400'
+        resp.headers['X-Content-Type-Options'] = 'nosniff'
         return resp
     except Exception as exc:
         log.debug("Map tile fetch failed %s/%s/%s: %s", z, x, y, exc)
