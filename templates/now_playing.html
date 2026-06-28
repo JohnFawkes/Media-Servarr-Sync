@@ -425,7 +425,7 @@
   var STATS_INTERVAL = 10; // seconds
   var statsTick, statsRemaining = STATS_INTERVAL;
   var cpuChart = null, ramChart = null;
-  var cpuData = [], ramData = [], statsLabels = [];
+  var cpuHostData = [], cpuPlexData = [], ramHostData = [], ramPlexData = [], statsLabels = [];
   var MAX_POINTS = 30; // 5-minute window at 10s
 
   function fmtBytes(b) {
@@ -435,22 +435,23 @@
     return (b / 1073741824).toFixed(2) + ' GB';
   }
 
-  function makeChart(ctx, label, color) {
+  function makeChart(ctx, colorA, colorB) {
+    function ds(label, color, dashed) {
+      return {
+        label: label,
+        data: [],
+        borderColor: color,
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        borderDash: dashed ? [4, 3] : [],
+        pointRadius: 0,
+        tension: 0.3,
+        fill: false,
+      };
+    }
     return new Chart(ctx, {
       type: 'line',
-      data: {
-        labels: [],
-        datasets: [{
-          label: label,
-          data: [],
-          borderColor: color,
-          backgroundColor: color.replace(')', ', 0.08)').replace('rgb', 'rgba'),
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.3,
-          fill: true,
-        }]
-      },
+      data: { labels: [], datasets: [ds('System', colorA, false), ds('Plex', colorB, true)] },
       options: {
         animation: false,
         responsive: true,
@@ -463,9 +464,10 @@
             grid: { color: 'rgba(255,255,255,0.04)' },
           }
         },
-        plugins: { legend: { display: false }, tooltip: {
-          callbacks: { label: function(c) { return c.parsed.y.toFixed(1) + '%'; } }
-        }}
+        plugins: {
+          legend: { display: true, labels: { color: '#888', font: { size: 9 }, boxWidth: 20, padding: 8 } },
+          tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + c.parsed.y.toFixed(1) + '%'; } } }
+        }
       }
     });
   }
@@ -481,35 +483,49 @@
       body.innerHTML =
         '<div class="stats-grid">' +
           '<div class="stat-chart-wrap">' +
-            '<div class="stat-chart-label">CPU <span class="stat-chart-val" id="cpu-val">—</span></div>' +
-            '<div style="height:80px"><canvas id="cpu-canvas"></canvas></div>' +
+            '<div class="stat-chart-label">CPU' +
+              '<span style="margin-left:auto;display:flex;gap:12px;">' +
+                '<span>System <span class="stat-chart-val" id="cpu-host-val">—</span></span>' +
+                '<span>Plex <span class="stat-chart-val" id="cpu-plex-val">—</span></span>' +
+              '</span>' +
+            '</div>' +
+            '<div style="height:90px"><canvas id="cpu-canvas"></canvas></div>' +
           '</div>' +
           '<div class="stat-chart-wrap">' +
-            '<div class="stat-chart-label">RAM <span class="stat-chart-val" id="ram-val">—</span></div>' +
-            '<div style="height:80px"><canvas id="ram-canvas"></canvas></div>' +
+            '<div class="stat-chart-label">RAM' +
+              '<span style="margin-left:auto;display:flex;gap:12px;">' +
+                '<span>System <span class="stat-chart-val" id="ram-host-val">—</span></span>' +
+                '<span>Plex <span class="stat-chart-val" id="ram-plex-val">—</span></span>' +
+              '</span>' +
+            '</div>' +
+            '<div style="height:90px"><canvas id="ram-canvas"></canvas></div>' +
           '</div>' +
         '</div>' +
         '<div class="bw-row" id="bw-row"></div>';
-      cpuChart = makeChart(document.getElementById('cpu-canvas').getContext('2d'), 'CPU', 'rgb(229,160,13)');
-      ramChart = makeChart(document.getElementById('ram-canvas').getContext('2d'), 'RAM', 'rgb(96,165,250)');
+      cpuChart = makeChart(document.getElementById('cpu-canvas').getContext('2d'), 'rgb(229,160,13)', 'rgb(251,146,60)');
+      ramChart = makeChart(document.getElementById('ram-canvas').getContext('2d'), 'rgb(96,165,250)', 'rgb(167,139,250)');
     }
     if (data.resources) {
       var r = data.resources;
-      var cpuVal = r.host_cpu_pct;
-      var ramVal = r.host_ram_pct;
       var now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-      statsLabels.push(now); cpuData.push(cpuVal); ramData.push(ramVal);
-      if (statsLabels.length > MAX_POINTS) { statsLabels.shift(); cpuData.shift(); ramData.shift(); }
+      statsLabels.push(now);
+      cpuHostData.push(r.host_cpu_pct); cpuPlexData.push(r.process_cpu_pct);
+      ramHostData.push(r.host_ram_pct); ramPlexData.push(r.process_ram_pct);
+      if (statsLabels.length > MAX_POINTS) {
+        statsLabels.shift(); cpuHostData.shift(); cpuPlexData.shift();
+        ramHostData.shift(); ramPlexData.shift();
+      }
       cpuChart.data.labels = statsLabels;
-      cpuChart.data.datasets[0].data = cpuData;
+      cpuChart.data.datasets[0].data = cpuHostData;
+      cpuChart.data.datasets[1].data = cpuPlexData;
       cpuChart.update('none');
       ramChart.data.labels = statsLabels;
-      ramChart.data.datasets[0].data = ramData;
+      ramChart.data.datasets[0].data = ramHostData;
+      ramChart.data.datasets[1].data = ramPlexData;
       ramChart.update('none');
-      var cpuEl = document.getElementById('cpu-val');
-      var ramEl = document.getElementById('ram-val');
-      if (cpuEl) cpuEl.textContent = cpuVal.toFixed(1) + '%';
-      if (ramEl) ramEl.textContent = ramVal.toFixed(1) + '%';
+      var set = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v.toFixed(1) + '%'; };
+      set('cpu-host-val', r.host_cpu_pct); set('cpu-plex-val', r.process_cpu_pct);
+      set('ram-host-val', r.host_ram_pct); set('ram-plex-val', r.process_ram_pct);
     }
     if (data.bandwidth) {
       var bw = data.bandwidth;
@@ -554,7 +570,7 @@
     clearInterval(statsTick);
     if (cpuChart) { cpuChart.destroy(); cpuChart = null; }
     if (ramChart) { ramChart.destroy(); ramChart = null; }
-    cpuData = []; ramData = []; statsLabels = [];
+    cpuHostData = []; cpuPlexData = []; ramHostData = []; ramPlexData = []; statsLabels = [];
     Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
     activeMaps = {};
     npRendered = false;
