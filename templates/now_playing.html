@@ -463,9 +463,10 @@
         backgroundColor: 'transparent',
         borderWidth: 1.5,
         borderDash: dashed ? [4, 3] : [],
-        pointRadius: 0,
+        pointRadius: 2,
         tension: 0.3,
         fill: false,
+        spanGaps: false,
       };
     }
     return new Chart(ctx, {
@@ -518,6 +519,16 @@
       '<div class="bw-row" id="bw-row"></div>';
     cpuChart = makeChart(document.getElementById('cpu-canvas').getContext('2d'), 'rgb(229,160,13)', 'rgb(251,146,60)');
     ramChart = makeChart(document.getElementById('ram-canvas').getContext('2d'), 'rgb(96,165,250)', 'rgb(167,139,250)');
+    /* Seed with one null point so the first real data point produces a visible line */
+    statsLabels = [''];
+    cpuHostData = [null]; cpuPlexData = [null];
+    ramHostData = [null]; ramPlexData = [null];
+    cpuChart.data.labels = statsLabels;
+    cpuChart.data.datasets[0].data = cpuHostData;
+    cpuChart.data.datasets[1].data = cpuPlexData;
+    ramChart.data.labels = statsLabels;
+    ramChart.data.datasets[0].data = ramHostData;
+    ramChart.data.datasets[1].data = ramPlexData;
   }
 
   function renderStats(data) {
