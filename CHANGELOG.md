@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v0.20.1] - 2026-06-27
 
+### Added
+- **Plex server stats on Now Playing page** — a new Server Stats card shows live rolling line charts for CPU % and RAM %, each with two lines: **System** (host) and **Plex process**. Charts poll `/statistics/resources` every 10 s and display a 5-minute / 30-point rolling window. Current LAN, WAN, and total bandwidth from `/statistics/bandwidth` is shown below the charts. Chart.js 4.4.4 is bundled locally under `static/chart.min.js` (no CDN dependency). A new `/api/server-stats` route (session-authenticated) proxies both Plex endpoints.
+
+### Fixed
+- **HW Transcode now labelled correctly** — streams that use hardware transcoding (where Plex sets `transcodeHwEncoding` or `transcodeHwRequested`) now display as **HW Transcode** instead of the generic **Transcode** in the Now Playing stream quality row.
+- **Audio transcode now shown separately** — when video and audio decisions differ (e.g. video Direct Stream + audio Transcode), the quality row now shows both, e.g. `Direct Stream · Audio Transcode`, matching the Plex dashboard behaviour.
+- **Server stats card blank after PJAX navigation** — when `manual_ui.html` was the outer shell (e.g. after a hard refresh on the Sync tab), navigating to Now Playing via PJAX never loaded `chart.min.js`, so `new Chart()` failed silently. Fixed by dynamically loading `chart.min.js` in the `page-init` script when `Chart` is not yet defined.
+- **Tag legend missing after navigating from Now Playing → Sync** — `now_playing.html`'s PJAX handler lacked the legend/back-to-top hide-and-restore logic present in `manual_ui.html`. Added the same show/hide behaviour so the legend reappears correctly on every return to the Sync tab.
+- **Server stats chart lines only visible after first 10-second poll** — Chart.js draws nothing for a single data point when `pointRadius` is 0 (a line segment requires 2 points). Charts are now seeded with a `null` placeholder on init so the first real fetch immediately produces a visible line.
+
+---
+
+## [v0.20.1] - 2026-06-27
+
 ### Fixed
 - **Per-episode tags now render for batch downloads** — when Sonarr sends a single webhook with multiple files in `episodeFiles` or `renamedEpisodeFiles`, each file's quality is now stored individually in the rich episode object rather than being merged into a flat tag row. Custom formats from the same release are shared across all files in the batch.
 - **Episode badge tooltip shows per-file quality and format tags** — hovering the yellow episode-count badge now displays each filename alongside its own quality and custom-format pills inside the popup, instead of expanding into separate rows below the folder path. The flat merged tag row below the folder is unchanged.

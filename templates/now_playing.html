@@ -117,6 +117,35 @@
   }
   .interval-input:hover, .interval-input:focus { border-color: var(--accent); color: var(--text); }
 
+  /* -------- Server Stats -------- */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 600px) { .stats-grid { grid-template-columns: 1fr; } }
+  .stat-chart-wrap {
+    position: relative;
+  }
+  .stat-chart-label {
+    font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 6px;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .stat-chart-val {
+    font-size: 14px; font-weight: 600; color: var(--text); letter-spacing: 0;
+  }
+  .stat-chart-canvas { width: 100% !important; height: 80px !important; }
+  .bw-row {
+    display: flex; gap: 24px; flex-wrap: wrap;
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted);
+  }
+  .bw-item { display: flex; flex-direction: column; gap: 2px; }
+  .bw-val { font-size: 14px; color: var(--text); }
+  .stats-error { color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
+
   /* -------- Now Playing -------- */
   .np-empty {
     color: var(--muted); font-family: 'IBM Plex Mono', monospace;
@@ -309,6 +338,16 @@
     </div>
   </div>
 
+  <div class="card" id="server-stats-card">
+    <div class="card-label" style="display:flex;align-items:center;gap:6px;">
+      Server Stats
+      <span id="stats-countdown" style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.05em;min-width:28px;text-align:right;"></span>
+    </div>
+    <div id="server-stats-body">
+      <div class="stats-error">Loading…</div>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-label">Full Library Scan</div>
     <div class="input-row">
@@ -323,6 +362,7 @@
   </div>{# /page-content #}
 </div>
 
+<script src="/static/chart.min.js"></script>
 <script src="/static/leaflet.js"></script>
 <script>/* PJAX: intercept nav-link clicks, swap #page-content, re-run page-init */
 (function() {
@@ -335,19 +375,38 @@
       .then(function(r) { if (!r.ok) throw r; return r.text(); })
       .then(function(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newPath = new URL(url, location.origin).pathname;
+        var onSync = newPath === '/';
+        /* hide sync-only chrome before CSS swap to avoid layout flash */
+        var btt = document.getElementById('back-to-top');
+        var leg = document.querySelector('.legend');
+        if (!onSync) {
+          if (btt) { btt.classList.remove('visible'); btt.style.display = 'none'; }
+          if (leg) leg.style.display = 'none';
+        }
         var nc = doc.getElementById('page-content');
         var cc = document.getElementById('page-content');
         if (nc && cc) cc.innerHTML = nc.innerHTML;
         var ns = doc.getElementById('page-style');
         var cs = document.getElementById('page-style');
         if (ns && cs) cs.textContent = ns.textContent;
-        var newPath = new URL(url, location.origin).pathname;
         document.querySelectorAll('a.nav-link').forEach(function(a) {
           a.classList.toggle('active', new URL(a.href, location.origin).pathname === newPath);
         });
         document.title = doc.title || document.title;
         history.pushState({pjax: url}, '', url);
         window.scrollTo(0, 0);
+        /* restore sync-only chrome when returning to Sync tab */
+        if (onSync) {
+          if (!btt) {
+            var nb = doc.getElementById('back-to-top');
+            if (nb) document.body.insertBefore(nb.cloneNode(true), document.body.firstChild);
+          } else { btt.style.display = ''; }
+          if (!leg) {
+            var nl = doc.querySelector('.legend');
+            if (nl) document.body.insertBefore(nl.cloneNode(true), document.body.firstChild);
+          } else { leg.style.display = ''; }
+        }
         var init = doc.getElementById('page-init');
         if (init) {
           var s = document.createElement('script');
@@ -381,8 +440,185 @@
   var npRendered = false;
   var PLEX_URL = {{ plex_url | tojson }};
 
+  /* ---------- server stats ---------- */
+  var STATS_INTERVAL = 10; // seconds
+  var statsTick, statsRemaining = STATS_INTERVAL;
+  var cpuChart = null, ramChart = null;
+  var cpuHostData = [], cpuPlexData = [], ramHostData = [], ramPlexData = [], statsLabels = [];
+  var MAX_POINTS = 30; // 5-minute window at 10s
+
+  function fmtBytes(b) {
+    if (!b || b < 1024) return (b || 0) + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1073741824).toFixed(2) + ' GB';
+  }
+
+  function makeChart(ctx, colorA, colorB) {
+    function ds(label, color, dashed) {
+      return {
+        label: label,
+        data: [],
+        borderColor: color,
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        borderDash: dashed ? [4, 3] : [],
+        pointRadius: 2,
+        tension: 0.3,
+        fill: false,
+        spanGaps: false,
+      };
+    }
+    return new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [ds('System', colorA, false), ds('Plex', colorB, true)] },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { display: false },
+          y: {
+            min: 0, max: 100,
+            ticks: { color: '#666', font: { size: 9 }, maxTicksLimit: 4, callback: function(v) { return v + '%'; } },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          }
+        },
+        plugins: {
+          legend: { display: true, labels: { color: '#888', font: { size: 9 }, boxWidth: 20, padding: 8 } },
+          tooltip: { callbacks: { label: function(c) { return c.dataset.label + ': ' + c.parsed.y.toFixed(1) + '%'; } } }
+        }
+      }
+    });
+  }
+
+  function initStatsUI() {
+    var body = document.getElementById('server-stats-body');
+    if (!body || cpuChart) return;
+    body.innerHTML =
+      '<div class="stats-grid">' +
+        '<div class="stat-chart-wrap">' +
+          '<div class="stat-chart-label">CPU' +
+            '<span style="margin-left:auto;display:flex;gap:12px;">' +
+              '<span>System <span class="stat-chart-val" id="cpu-host-val">—</span></span>' +
+              '<span>Plex <span class="stat-chart-val" id="cpu-plex-val">—</span></span>' +
+            '</span>' +
+          '</div>' +
+          '<div style="height:90px"><canvas id="cpu-canvas"></canvas></div>' +
+        '</div>' +
+        '<div class="stat-chart-wrap">' +
+          '<div class="stat-chart-label">RAM' +
+            '<span style="margin-left:auto;display:flex;gap:12px;">' +
+              '<span>System <span class="stat-chart-val" id="ram-host-val">—</span></span>' +
+              '<span>Plex <span class="stat-chart-val" id="ram-plex-val">—</span></span>' +
+            '</span>' +
+          '</div>' +
+          '<div style="height:90px"><canvas id="ram-canvas"></canvas></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="bw-row" id="bw-row"></div>';
+    cpuChart = makeChart(document.getElementById('cpu-canvas').getContext('2d'), 'rgb(229,160,13)', 'rgb(251,146,60)');
+    ramChart = makeChart(document.getElementById('ram-canvas').getContext('2d'), 'rgb(96,165,250)', 'rgb(167,139,250)');
+    /* Seed with one null point so the first real data point produces a visible line */
+    statsLabels = [''];
+    cpuHostData = [null]; cpuPlexData = [null];
+    ramHostData = [null]; ramPlexData = [null];
+    cpuChart.data.labels = statsLabels;
+    cpuChart.data.datasets[0].data = cpuHostData;
+    cpuChart.data.datasets[1].data = cpuPlexData;
+    ramChart.data.labels = statsLabels;
+    ramChart.data.datasets[0].data = ramHostData;
+    ramChart.data.datasets[1].data = ramPlexData;
+  }
+
+  function renderStats(data) {
+    var body = document.getElementById('server-stats-body');
+    if (!body) return;
+    if (!data || (!data.resources && !data.bandwidth)) {
+      if (!cpuChart) body.innerHTML = '<div class="stats-error">Stats unavailable</div>';
+      return;
+    }
+    if (data.resources) {
+      var r = data.resources;
+      var now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      statsLabels.push(now);
+      cpuHostData.push(r.host_cpu_pct); cpuPlexData.push(r.process_cpu_pct);
+      ramHostData.push(r.host_ram_pct); ramPlexData.push(r.process_ram_pct);
+      if (statsLabels.length > MAX_POINTS) {
+        statsLabels.shift(); cpuHostData.shift(); cpuPlexData.shift();
+        ramHostData.shift(); ramPlexData.shift();
+      }
+      cpuChart.data.labels = statsLabels;
+      cpuChart.data.datasets[0].data = cpuHostData;
+      cpuChart.data.datasets[1].data = cpuPlexData;
+      cpuChart.update();
+      ramChart.data.labels = statsLabels;
+      ramChart.data.datasets[0].data = ramHostData;
+      ramChart.data.datasets[1].data = ramPlexData;
+      ramChart.update();
+      var set = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v.toFixed(1) + '%'; };
+      set('cpu-host-val', r.host_cpu_pct); set('cpu-plex-val', r.process_cpu_pct);
+      set('ram-host-val', r.host_ram_pct); set('ram-plex-val', r.process_ram_pct);
+    }
+    if (data.bandwidth) {
+      var bw = data.bandwidth;
+      var bwEl = document.getElementById('bw-row');
+      if (bwEl) {
+        bwEl.innerHTML =
+          '<div class="bw-item"><span>LAN</span><span class="bw-val">' + fmtBytes(bw.lan_bytes) + '</span></div>' +
+          '<div class="bw-item"><span>WAN</span><span class="bw-val">' + fmtBytes(bw.wan_bytes) + '</span></div>' +
+          '<div class="bw-item"><span>Total</span><span class="bw-val">' + fmtBytes(bw.total_bytes) + '</span></div>';
+      }
+    }
+  }
+
+  function doStatsRefresh() {
+    fetch('/api/server-stats', {cache: 'no-store'})
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) { if (d) renderStats(d); })
+      .catch(function() {});
+  }
+
+  function startStatsCountdown() {
+    clearInterval(statsTick);
+    statsRemaining = STATS_INTERVAL;
+    var el = document.getElementById('stats-countdown');
+    if (el) el.textContent = statsRemaining + 's';
+    statsTick = setInterval(function() {
+      statsRemaining--;
+      if (el) el.textContent = statsRemaining + 's';
+      if (statsRemaining <= 0) {
+        statsRemaining = STATS_INTERVAL;
+        doStatsRefresh();
+      }
+    }, 1000);
+  }
+
+  function initStats() {
+    initStatsUI();
+    requestAnimationFrame(function() {
+      if (cpuChart) cpuChart.resize();
+      if (ramChart) ramChart.resize();
+      doStatsRefresh();
+      startStatsCountdown();
+    });
+  }
+  if (typeof Chart !== 'undefined') {
+    initStats();
+  } else {
+    var _cs = document.createElement('script');
+    _cs.src = '/static/chart.min.js';
+    _cs.onload = initStats;
+    document.head.appendChild(_cs);
+  }
+  /* ---------- end server stats ---------- */
+
   window.__pjaxCleanup = function() {
     clearInterval(npTick);
+    clearInterval(statsTick);
+    if (cpuChart) { cpuChart.destroy(); cpuChart = null; }
+    if (ramChart) { ramChart.destroy(); ramChart = null; }
+    cpuHostData = []; cpuPlexData = []; ramHostData = []; ramPlexData = []; statsLabels = [];
     Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
     activeMaps = {};
     npRendered = false;
