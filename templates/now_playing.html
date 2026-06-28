@@ -540,11 +540,11 @@
       cpuChart.data.labels = statsLabels;
       cpuChart.data.datasets[0].data = cpuHostData;
       cpuChart.data.datasets[1].data = cpuPlexData;
-      cpuChart.update('none');
+      cpuChart.update();
       ramChart.data.labels = statsLabels;
       ramChart.data.datasets[0].data = ramHostData;
       ramChart.data.datasets[1].data = ramPlexData;
-      ramChart.update('none');
+      ramChart.update();
       var set = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v.toFixed(1) + '%'; };
       set('cpu-host-val', r.host_cpu_pct); set('cpu-plex-val', r.process_cpu_pct);
       set('ram-host-val', r.host_ram_pct); set('ram-plex-val', r.process_ram_pct);
@@ -585,8 +585,12 @@
 
   function initStats() {
     initStatsUI();
-    doStatsRefresh();
-    startStatsCountdown();
+    requestAnimationFrame(function() {
+      if (cpuChart) cpuChart.resize();
+      if (ramChart) ramChart.resize();
+      doStatsRefresh();
+      startStatsCountdown();
+    });
   }
   if (typeof Chart !== 'undefined') {
     initStats();
