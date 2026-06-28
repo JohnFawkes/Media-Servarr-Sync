@@ -13,6 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="ServarrSync">
 <link rel="apple-touch-icon" href="/static/icon.svg">
 <link rel="stylesheet" href="/static/fonts.css">
+<link rel="stylesheet" href="/static/leaflet.css">
 <style id="page-style">
 
   :root {
@@ -289,6 +290,9 @@
   .msg.success { border-color: var(--success); color: var(--success); background: rgba(74,222,128,0.07); }
   .msg.error   { border-color: var(--error);   color: var(--error);   background: rgba(248,113,113,0.07); }
 
+  /* Leaflet dark theme */
+  .leaflet-tile { filter: brightness(0.6) invert(1) hue-rotate(180deg) saturate(0.5); }
+  .leaflet-container { background: #1a1a1f; }
 </style>
 </head>
 <body>
@@ -359,6 +363,7 @@
 </div>
 
 <script src="/static/chart.min.js"></script>
+<script src="/static/leaflet.js"></script>
 <script>/* PJAX: intercept nav-link clicks, swap #page-content, re-run page-init */
 (function() {
   function pjaxLoad(url) {
@@ -431,6 +436,7 @@
   var NP_INTERVAL = parseInt(localStorage.getItem(NP_LS) || '10', 10);
   var npRemaining = NP_INTERVAL;
   var npTick;
+  var activeMaps = {};
   var npRendered = false;
   var PLEX_URL = {{ plex_url | tojson }};
 
@@ -613,6 +619,8 @@
     if (cpuChart) { cpuChart.destroy(); cpuChart = null; }
     if (ramChart) { ramChart.destroy(); ramChart = null; }
     cpuHostData = []; cpuPlexData = []; ramHostData = []; ramPlexData = []; statsLabels = [];
+    Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
+    activeMaps = {};
     npRendered = false;
   };
 
@@ -745,6 +753,7 @@
     container.querySelectorAll('.np-session[data-sid]').forEach(function(row) {
       var sid = row.getAttribute('data-sid');
       if (!incoming[sid]) {
+        if (activeMaps[sid]) { try { activeMaps[sid].remove(); } catch(e) {} delete activeMaps[sid]; }
         row.remove();
       }
     });
@@ -817,10 +826,20 @@
           if (geo.org && geo.org !== geo.isp) parts.push(geo.org);
           if (parts.length) geoDetail.textContent = parts.join(' · ');
         }
-        if (mapEl) {
-          var bbox = (geo.lon-1.5)+','+(geo.lat-1)+','+(geo.lon+1.5)+','+(geo.lat+1);
-          var src = 'https://www.openstreetmap.org/export/embed.html?bbox='+bbox+'&layer=mapnik&marker='+geo.lat+','+geo.lon;
-          mapEl.innerHTML = '<iframe src="'+src+'" style="width:100%;height:200px;border:none;border-radius:3px;" loading="lazy"></iframe>';
+        if (mapEl && typeof L !== 'undefined') {
+          mapEl.style.height = '200px';
+          var map = L.map(mapId, {
+            center: [geo.lat, geo.lon], zoom: 7,
+            zoomControl: false, attributionControl: false,
+            scrollWheelZoom: false, dragging: false,
+            touchZoom: false, doubleClickZoom: false,
+          });
+          L.tileLayer('/api/maptile/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+          L.circleMarker([geo.lat, geo.lon], {
+            radius: 7, color: '#e5a00d', fillColor: '#e5a00d', fillOpacity: 0.9, weight: 2
+          }).bindTooltip(location, {permanent: false, direction: 'top'}).addTo(map);
+          activeMaps[sessionId] = map;
+          setTimeout(function() { map.invalidateSize(); }, 50);
         }
       }
     } catch(e) { /* geo not critical */ }
