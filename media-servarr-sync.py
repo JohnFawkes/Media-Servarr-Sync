@@ -1390,6 +1390,7 @@ _DEMO_SESSIONS = [
         "duration_str": "47:12", "position_str": "19:50",
         "quality": "1080p", "stream_type": "Direct Play", "transcode": False,
         "player_address": "192.168.1.42", "player_remote_address": "104.18.22.55",
+        "thumb_key": "/demo/breaking-bad",
     },
     {
         "user": "sarah", "title": "Dune: Part Two", "show": None,
@@ -1398,6 +1399,7 @@ _DEMO_SESSIONS = [
         "duration_str": "2:46:00", "position_str": "1:52:53",
         "quality": "4K", "stream_type": "Direct Stream", "transcode": False,
         "player_address": "192.168.1.77", "player_remote_address": "81.2.69.142",
+        "thumb_key": "/demo/dune-part-two",
     },
     {
         "user": "mike", "title": "Napkins", "show": "The Bear",
@@ -1406,8 +1408,16 @@ _DEMO_SESSIONS = [
         "duration_str": "39:04", "position_str": "5:51",
         "quality": "720p", "stream_type": "Transcode", "transcode": True,
         "player_address": "192.168.1.15", "player_remote_address": "203.0.113.42",
+        "thumb_key": "/demo/the-bear",
     },
 ]
+
+# TMDB poster paths for demo sessions (w185 size)
+_DEMO_POSTERS: dict[str, str] = {
+    "/demo/breaking-bad":  "https://image.tmdb.org/t/p/w185/ggFHVNu6YYI5L9pCfOacjizRGt.jpg",
+    "/demo/dune-part-two": "https://image.tmdb.org/t/p/w185/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg",
+    "/demo/the-bear":      "https://image.tmdb.org/t/p/w185/sHFlbKS3WLqMnp9t2ghADIJFnuQ.jpg",
+}
 
 # Fake geo data keyed by demo remote IP — returned directly to avoid hitting ipinfo.io
 _DEMO_GEO: dict[str, dict] = {
@@ -1712,6 +1722,30 @@ def now_playing():
 @requires_auth
 def api_server_stats():
     """Return Plex server CPU, RAM, and bandwidth stats."""
+    if session.get('demo'):
+        import math
+        t = time.time()
+        # Produce smoothly varying fake values using sine waves so each poll looks different
+        host_cpu  = round(18 + 12 * math.sin(t / 13) + 5 * math.sin(t / 7), 1)
+        plex_cpu  = round(8  +  6 * math.sin(t / 17) + 3 * math.sin(t / 5), 1)
+        host_ram  = round(54 +  8 * math.sin(t / 23) + 4 * math.sin(t / 11), 1)
+        plex_ram  = round(22 +  5 * math.sin(t / 19) + 2 * math.sin(t / 9),  1)
+        lan_bytes = int((820 + 180 * math.sin(t / 11)) * 1024 * 1024)
+        wan_bytes = int((340 +  90 * math.sin(t / 7))  * 1024 * 1024)
+        return jsonify({
+            "resources": {
+                "host_cpu_pct":     host_cpu,
+                "process_cpu_pct":  plex_cpu,
+                "host_ram_pct":     host_ram,
+                "process_ram_pct":  plex_ram,
+                "at": int(t),
+            },
+            "bandwidth": {
+                "lan_bytes":   lan_bytes,
+                "wan_bytes":   wan_bytes,
+                "total_bytes": lan_bytes + wan_bytes,
+            },
+        })
     plex = get_plex()
     if plex is None:
         return jsonify({"error": "Plex unavailable"}), 503
@@ -1845,7 +1879,7 @@ def api_sessions():
                 'rating_key': '', 'plex_item_key': '', 'type': s['type'],
                 'title': s['title'], 'year': None,
                 'show_title': s.get('show'), 'season_episode': s.get('episode'),
-                'thumb_key': None,
+                'thumb_key': s.get('thumb_key'),
                 'progress_pct': s['progress_pct'],
                 'view_offset_ms': 0, 'duration_ms': 0,
                 'state': s['state'], 'stream_type': s['stream_type'],
@@ -1958,6 +1992,17 @@ def api_thumb():
     key = request.args.get('key', '').strip()
     if not key:
         return '', 404
+    if session.get('demo') and key in _DEMO_POSTERS:
+        try:
+            r = requests.get(_DEMO_POSTERS[key], timeout=8)
+            if r.ok:
+                resp = make_response(r.content)
+                resp.headers['Content-Type'] = r.headers.get('Content-Type', 'image/jpeg')
+                resp.headers['Cache-Control'] = 'public, max-age=86400'
+                return resp
+        except Exception:
+            pass
+        return '', 502
     if not (key.startswith('/library/') or key.startswith('/photo/')):
         return '', 403
     # Restrict to safe path characters only — prevents injection via crafted keys.
