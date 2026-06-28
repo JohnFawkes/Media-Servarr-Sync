@@ -1656,9 +1656,12 @@ def now_playing():
                     progress_pct = round(view_offset / duration * 100, 1) if duration else 0
                     if ts:
                         vd = getattr(ts, 'videoDecision', 'directplay')
-                        stream_type = {'directplay': 'Direct Play', 'copy': 'Direct Stream',
-                                       'transcode': 'Transcode'}.get(vd, 'Direct Play')
                         transcode = vd == 'transcode'
+                        if transcode and (getattr(ts, 'transcodeHwEncoding', False) or getattr(ts, 'transcodeHwRequested', False)):
+                            stream_type = 'HW Transcode'
+                        else:
+                            stream_type = {'directplay': 'Direct Play', 'copy': 'Direct Stream',
+                                           'transcode': 'Transcode'}.get(vd, 'Direct Play')
                     else:
                         stream_type, transcode = 'Direct Play', False
                     quality = ''
@@ -1863,11 +1866,14 @@ def api_sessions():
 
             if ts:
                 vd = getattr(ts, 'videoDecision', 'directplay')
-                stream_type = {
-                    'directplay': 'Direct Play',
-                    'copy': 'Direct Stream',
-                    'transcode': 'Transcode',
-                }.get(vd, vd.title() if vd else 'Direct Play')
+                if vd == 'transcode' and (getattr(ts, 'transcodeHwEncoding', False) or getattr(ts, 'transcodeHwRequested', False)):
+                    stream_type = 'HW Transcode'
+                else:
+                    stream_type = {
+                        'directplay': 'Direct Play',
+                        'copy': 'Direct Stream',
+                        'transcode': 'Transcode',
+                    }.get(vd, vd.title() if vd else 'Direct Play')
             else:
                 stream_type = 'Direct Play'
 
