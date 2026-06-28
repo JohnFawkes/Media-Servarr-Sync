@@ -436,6 +436,37 @@
   }
   @media (max-width: 1000px) { .legend { display: none; } }
 
+  /* Inline legend for mobile — horizontal pill row */
+  .legend-inline {
+    display: none;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .legend-inline-title {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    width: 100%;
+    margin-bottom: 2px;
+  }
+  .legend-inline-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+  @media (max-width: 1000px) { .legend-inline { display: flex; } }
+
   /* -------- Header nav -------- */
   .header-meta {
     display: flex;
@@ -703,6 +734,13 @@
         <input type="number" id="sync-interval-input" class="interval-input" min="-1" value="30" title="Sync history refresh interval in seconds · 0 = live · -1 = off">
         <button type="button" id="refresh-btn" class="refresh-btn" title="Refresh now">↻</button>
       </span>
+    </div>
+    <div class="legend-inline">
+      <div class="legend-inline-title">Tag Legend</div>
+      <span class="legend-inline-item"><span class="legend-swatch tag-qp">Profile</span> Quality Profile</span>
+      <span class="legend-inline-item"><span class="legend-swatch tag-quality">Quality</span> Quality</span>
+      <span class="legend-inline-item"><span class="legend-swatch tag-cf">Format</span> Custom Format</span>
+      <span class="legend-inline-item"><span class="episode-count-badge" style="pointer-events:none;">2 eps</span> Hover for details</span>
     </div>
     <div class="filter-bar">
       <form method="get" style="display:contents">
