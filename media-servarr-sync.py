@@ -1389,6 +1389,7 @@ _DEMO_SESSIONS = [
         "state": "playing", "progress_pct": 42,
         "duration_str": "47:12", "position_str": "19:50",
         "quality": "1080p", "stream_type": "Direct Play", "transcode": False,
+        "player_address": "192.168.1.42", "player_remote_address": "104.18.22.55",
     },
     {
         "user": "sarah", "title": "Dune: Part Two", "show": None,
@@ -1396,6 +1397,7 @@ _DEMO_SESSIONS = [
         "state": "playing", "progress_pct": 68,
         "duration_str": "2:46:00", "position_str": "1:52:53",
         "quality": "4K", "stream_type": "Direct Stream", "transcode": False,
+        "player_address": "192.168.1.77", "player_remote_address": "81.2.69.142",
     },
     {
         "user": "mike", "title": "Napkins", "show": "The Bear",
@@ -1403,8 +1405,16 @@ _DEMO_SESSIONS = [
         "state": "paused", "progress_pct": 15,
         "duration_str": "39:04", "position_str": "5:51",
         "quality": "720p", "stream_type": "Transcode", "transcode": True,
+        "player_address": "192.168.1.15", "player_remote_address": "203.0.113.42",
     },
 ]
+
+# Fake geo data keyed by demo remote IP — returned directly to avoid hitting ipinfo.io
+_DEMO_GEO: dict[str, dict] = {
+    "104.18.22.55": {"status": "success", "query": "104.18.22.55", "city": "New York", "regionName": "New York", "country": "United States", "countryCode": "US", "lat": 40.7128, "lon": -74.0060},
+    "81.2.69.142":  {"status": "success", "query": "81.2.69.142",  "city": "London",   "regionName": "England",  "country": "United Kingdom", "countryCode": "GB", "lat": 51.5074, "lon": -0.1278},
+    "203.0.113.42": {"status": "success", "query": "203.0.113.42", "city": "Sydney",   "regionName": "New South Wales", "country": "Australia", "countryCode": "AU", "lat": -33.8688, "lon": 151.2093},
+}
 
 
 def _demo_history() -> list:
@@ -1424,7 +1434,7 @@ def _demo_history() -> list:
             "ts": (now - timedelta(minutes=18)).strftime("%Y-%m-%dT%H:%M:%S"),
             "label": "SONARR", "status": "ok", "error": "", "duration_s": 4.1,
             "path": "/media/tv/The Bear (2022)/Season 3/",
-            "episode": '["The.Bear.S03E01.Napkins.1080p.WEB-DL.mkv","The.Bear.S03E02.Bolognese.1080p.WEB-DL.mkv","The.Bear.S03E03.Doors.And.Windows.1080p.WEB-DL.mkv"]',
+            "episode": '[{"f":"The.Bear.S03E01.Napkins.1080p.WEB-DL.mkv","q":"WEB-DL-1080p","cf":["HLG","ATMOS"]},{"f":"The.Bear.S03E02.Bolognese.1080p.WEB-DL.mkv","q":"WEB-DL-1080p","cf":["HLG"]},{"f":"The.Bear.S03E03.Doors.And.Windows.720p.WEB-DL.mkv","q":"WEB-DL-720p","cf":[]}]',
             "quality": "WEB-DL-1080p", "custom_formats": '["HLG"]',
             "quality_profile": "WEB-1080p",
         },
@@ -1432,7 +1442,8 @@ def _demo_history() -> list:
             "ts": (now - timedelta(hours=1, minutes=5)).strftime("%Y-%m-%dT%H:%M:%S"),
             "label": "RADARR", "status": "ok", "error": "", "duration_s": 5.7,
             "path": "/media/movies/Dune Part Two (2024)/",
-            "episode": "", "quality": "Bluray-2160p",
+            "episode": "Dune.Part.Two.2024.2160p.BluRay.REMUX.HEVC.DV.HDR10Plus.TrueHD.Atmos.7.1.mkv",
+            "quality": "Bluray-2160p",
             "custom_formats": '["HDR10+", "DV", "Remux"]',
             "quality_profile": "UHD Remux",
         },
@@ -1465,7 +1476,8 @@ def _demo_history() -> list:
             "ts": (now - timedelta(hours=9, minutes=11)).strftime("%Y-%m-%dT%H:%M:%S"),
             "label": "RADARR", "status": "ok", "error": "", "duration_s": 4.3,
             "path": "/media/movies/Oppenheimer (2023)/",
-            "episode": "", "quality": "Bluray-1080p",
+            "episode": "Oppenheimer.2023.1080p.BluRay.REMUX.AVC.TrueHD.Atmos.7.1.mkv",
+            "quality": "Bluray-1080p",
             "custom_formats": '["ATMOS", "TrueHD"]', "quality_profile": "HD-1080p Remux",
         },
         {
@@ -1841,7 +1853,7 @@ def api_sessions():
                 'bitrate_kbps': None,
                 'user': s['user'],
                 'player_device': s['player'], 'player_platform': '', 'player_product': '',
-                'player_address': '', 'player_remote_address': '',
+                'player_address': s.get('player_address', ''), 'player_remote_address': s.get('player_remote_address', ''),
             })
         return jsonify({'sessions': demo_result, 'machine_id': ''})
     plex_instance = get_plex()
@@ -2058,6 +2070,8 @@ def api_geoip():
     ip = request.args.get('ip', '').strip()
     if not ip:
         return jsonify({'error': 'no ip'}), 400
+    if session.get('demo') and ip in _DEMO_GEO:
+        return jsonify(_DEMO_GEO[ip])
     # Normalize and validate the IP; reject if private/invalid.
     try:
         safe_ip = str(ipaddress.ip_address(ip))
