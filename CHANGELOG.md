@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Update astral-sh/ruff-action action to v4
 - Update actions/github-script action to v9
 
 ---
