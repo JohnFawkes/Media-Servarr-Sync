@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **Mobile tag legend** — the Tag Legend (quality profile, quality, custom format badges) was hidden on screens narrower than 1000px. It now renders as an inline horizontal row above the filter bar on mobile, replacing the desktop fixed sidebar which had no room on small screens.
+- **Touch device legend hint** — the legend's interaction hint now reads "Tap for details" on touch-primary devices (detected via `hover: none` media query) instead of "Hover for details".
 
 ---
 
