@@ -1849,7 +1849,7 @@ def api_plex_update():
         data = {"available": available, "version": version, "release_notes_url": release_notes_url}
     except Exception as exc:
         log.debug("Plex update check failed: %s", exc)
-        data = {"available": False, "error": str(exc)}
+        data = {"available": False}
 
     _plex_update_cache["ts"] = now
     _plex_update_cache["data"] = data
