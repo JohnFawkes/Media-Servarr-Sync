@@ -582,21 +582,28 @@
   }
 
   /* Now Playing → fixed right sidebar on wide desktop viewports */
-  @media (min-width: 1300px) {
+  @media (min-width: 1440px) {
     #now-playing-card {
       position: fixed;
       right: 20px;
       top: 48px;
-      width: 280px;
+      width: 340px;
       max-height: calc(100vh - 96px);
       overflow-y: auto;
       margin-bottom: 0;
+      padding: 18px;
     }
     #now-playing-card .np-session { grid-template-columns: 60px 1fr; }
     #now-playing-card .np-map-col { display: none; }
-    #now-playing-card { padding: 16px; }
-    #now-playing-card .card-label { flex-wrap: wrap; row-gap: 6px; }
-    #now-playing-card .card-label > span:last-child { margin-left: 0 !important; width: 100%; justify-content: flex-end; }
+    #now-playing-card .card-label {
+      flex-wrap: wrap;
+      row-gap: 8px;
+    }
+    #now-playing-card .card-label > span:last-child {
+      margin-left: 0 !important;
+      width: 100%;
+      justify-content: flex-start;
+    }
   }
   .np-poster-wrap a { display: block; }
   .np-poster {
