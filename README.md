@@ -329,7 +329,7 @@ docker build -t media-servarr-sync .
 
 <p align="center">
   <img
-    src="https://repobeats.axiom.co/api/embed/REPLACE_WITH_YOUR_REPOBEATS_HASH.svg"
+    src="https://repobeats.axiom.co/api/embed/d9620664a2837e2c06089abf81eda12ba75dac95.svg"
     alt="Repobeats analytics"
   />
 </p>
