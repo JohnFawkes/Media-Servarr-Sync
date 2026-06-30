@@ -467,6 +467,72 @@
   }
   @media (max-width: 1000px) { .legend-inline { display: flex; } }
 
+  /* Plex update notification — desktop fixed box below legend */
+  .plex-update-box {
+    position: fixed;
+    left: 20px;
+    width: 160px;
+    background: var(--surface);
+    border: 1px solid var(--warn);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    display: none;
+  }
+  .plex-update-title {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--warn);
+    margin-bottom: 6px;
+  }
+  .plex-update-version {
+    font-size: 11px;
+    color: var(--text);
+    margin-bottom: 8px;
+    word-break: break-all;
+  }
+  .plex-update-dismiss {
+    font-size: 9px;
+    color: var(--muted);
+    cursor: pointer;
+    text-decoration: underline;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+  }
+  .plex-update-dismiss:hover { color: var(--text); }
+  @media (max-width: 1000px) { .plex-update-box { display: none !important; } }
+
+  /* Plex update notification — mobile inline below legend-inline */
+  .plex-update-inline {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--warn);
+    border-radius: var(--radius);
+    font-family: 'IBM Plex Mono', monospace;
+    align-items: center;
+    gap: 8px;
+    display: none;
+  }
+  .plex-update-inline-label {
+    font-size: 10px;
+    color: var(--warn);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .plex-update-inline-version {
+    font-size: 10px;
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+  }
+  @media (min-width: 1001px) { .plex-update-inline { display: none !important; } }
+
   /* -------- Header nav -------- */
   .header-meta {
     display: flex;
@@ -513,6 +579,31 @@
   @media (max-width: 560px) {
     .np-session { grid-template-columns: 60px 1fr; }
     .np-map-col { display: none; }
+  }
+
+  /* Now Playing → fixed right sidebar on wide desktop viewports */
+  @media (min-width: 1440px) {
+    #now-playing-card {
+      position: fixed;
+      right: 20px;
+      top: 132px;
+      width: 490px;
+      max-height: calc(100vh - 160px);
+      overflow-y: auto;
+      margin-bottom: 0;
+      padding: 24px;
+    }
+    #now-playing-card .np-session { grid-template-columns: 60px 1fr; }
+    #now-playing-card .np-map-col { display: none; }
+    #now-playing-card .card-label {
+      flex-wrap: wrap;
+      row-gap: 8px;
+    }
+    #now-playing-card .card-label > span:last-child {
+      margin-left: 0 !important;
+      width: 100%;
+      justify-content: flex-start;
+    }
   }
   .np-poster-wrap a { display: block; }
   .np-poster {
@@ -666,6 +757,11 @@
     <div class="legend-label" style="line-height:1.6">Hover the badge<br>to see per-file<br>details</div>
   </div>
 </aside>
+<div class="plex-update-box" id="plex-update-box">
+  <div class="plex-update-title">⬆ Plex Update</div>
+  <div class="plex-update-version" id="plex-update-version"></div>
+  <button class="plex-update-dismiss" id="plex-update-dismiss">Dismiss</button>
+</div>
 <div class="shell">
   <header>
     <a href="/" style="display:inline-flex;align-items:center;" title="Home">
@@ -709,7 +805,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="trigger-scan-card">
     <div class="card-label">Trigger path scan - (Path needs to be the same as your root path in sonarr or radarr)</div>
     <form method="post"> {# nosemgrep: django-no-csrf-token #}
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -741,6 +837,11 @@
       <span class="legend-inline-item"><span class="legend-swatch tag-quality">Quality</span> Quality</span>
       <span class="legend-inline-item"><span class="legend-swatch tag-cf">Format</span> Custom Format</span>
       <span class="legend-inline-item"><span class="episode-count-badge" style="pointer-events:none;">2 eps</span> <span id="legend-interaction-hint">Hover for details</span></span>
+    </div>
+    <div class="plex-update-inline" id="plex-update-inline">
+      <span class="plex-update-inline-label">⬆ Plex Update</span>
+      <span class="plex-update-inline-version" id="plex-update-inline-version"></span>
+      <button class="plex-update-dismiss" id="plex-update-inline-dismiss">✕</button>
     </div>
     <div class="filter-bar">
       <form method="get" style="display:contents">
@@ -938,9 +1039,13 @@
         /* hide sync-only chrome BEFORE the CSS swap to prevent layout flash */
         var btt = document.getElementById('back-to-top');
         var leg = document.querySelector('.legend');
+        var pub = document.getElementById('plex-update-box');
+        var pui = document.getElementById('plex-update-inline');
         if (!onSync) {
           if (btt) { btt.classList.remove('visible'); btt.style.display = 'none'; }
           if (leg) leg.style.display = 'none';
+          if (pub) pub.style.display = 'none';
+          if (pui) pui.style.display = 'none';
         }
         var nc = doc.getElementById('page-content');
         var cc = document.getElementById('page-content');
@@ -998,12 +1103,71 @@
     hint.textContent = 'Tap for details';
   }
 
+  /* Align Now Playing sidebar top with the Trigger path scan card on wide desktop */
+  function alignNowPlayingSidebar() {
+    var npCard = document.getElementById('now-playing-card');
+    var triggerCard = document.getElementById('trigger-scan-card');
+    if (!npCard || !triggerCard) return;
+    if (!window.matchMedia('(min-width: 1440px)').matches) {
+      npCard.style.top = '';
+      return;
+    }
+    var rect = triggerCard.getBoundingClientRect();
+    npCard.style.top = Math.max(rect.top, 0) + 'px';
+  }
+  alignNowPlayingSidebar();
+  window.addEventListener('resize', alignNowPlayingSidebar);
+  window.addEventListener('load', alignNowPlayingSidebar);
+  requestAnimationFrame(alignNowPlayingSidebar);
+  setTimeout(alignNowPlayingSidebar, 300);
+
+  /* Plex update notifier */
+  var PLEX_UPDATE_LS = 'servarr_plex_update_dismissed';
+  function showPlexUpdate(version) {
+    var dismissed = localStorage.getItem(PLEX_UPDATE_LS);
+    if (dismissed === version) return;
+    var isMobile = window.matchMedia('(max-width: 1000px)').matches;
+    if (isMobile) {
+      var inlineBox = document.getElementById('plex-update-inline');
+      var inlineVer = document.getElementById('plex-update-inline-version');
+      var inlineDismiss = document.getElementById('plex-update-inline-dismiss');
+      if (inlineBox && inlineVer) {
+        inlineVer.textContent = version;
+        inlineBox.style.display = 'flex';
+        if (inlineDismiss) inlineDismiss.onclick = function() {
+          localStorage.setItem(PLEX_UPDATE_LS, version);
+          inlineBox.style.display = 'none';
+        };
+      }
+    } else {
+      var box = document.getElementById('plex-update-box');
+      var ver = document.getElementById('plex-update-version');
+      var dismiss = document.getElementById('plex-update-dismiss');
+      var legend = document.querySelector('.legend');
+      if (box && ver && legend) {
+        ver.textContent = version;
+        var rect = legend.getBoundingClientRect();
+        box.style.top = (rect.bottom + window.scrollY + 8) + 'px';
+        box.style.display = 'block';
+        if (dismiss) dismiss.onclick = function() {
+          localStorage.setItem(PLEX_UPDATE_LS, version);
+          box.style.display = 'none';
+        };
+      }
+    }
+  }
+  fetch('/api/plex-update')
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) { if (d && d.available && d.version) showPlexUpdate(d.version); })
+    .catch(function() {});
+
   window.__pjaxCleanup = function() {
     clearInterval(tick); clearInterval(npTick);
     Object.keys(activeMaps).forEach(function(k) { try { activeMaps[k].remove(); } catch(e) {} });
     activeMaps = {};
     npRendered = false;
     window.onscroll = null;
+    window.removeEventListener('resize', alignNowPlayingSidebar);
   };
 
   /* ---------- search debounce ---------- */

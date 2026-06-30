@@ -1816,6 +1816,46 @@ def health():
     }), 200 if plex_ok else 207
 
 
+_plex_update_cache: dict = {"ts": 0, "data": None}
+_PLEX_UPDATE_TTL = 3600  # 1 hour
+
+
+@app.route('/api/plex-update', methods=['GET'])
+@requires_auth
+def api_plex_update():
+    """Check whether a Plex Media Server update is available (cached 1 h)."""
+    now = time.time()
+    if now - _plex_update_cache["ts"] < _PLEX_UPDATE_TTL and _plex_update_cache["data"] is not None:
+        return jsonify(_plex_update_cache["data"])
+
+    plex = get_plex()
+    if plex is None:
+        return jsonify({"available": False, "error": "plex_unavailable"}), 503
+
+    try:
+        releases = plex.query("/updater/status")
+        # The /updater/status response is an XML MediaContainer; PlexAPI parses
+        # it into an ElementTree element. The update info lives in <Release> children.
+        available = False
+        version = ""
+        release_notes_url = ""
+        if releases is not None:
+            for rel in releases:
+                if rel.tag == "Release":
+                    available = True
+                    version = rel.attrib.get("version", "")
+                    release_notes_url = rel.attrib.get("fixed", "")
+                    break
+        data = {"available": available, "version": version, "release_notes_url": release_notes_url}
+    except Exception as exc:
+        log.debug("Plex update check failed: %s", exc)
+        data = {"available": False}
+
+    _plex_update_cache["ts"] = now
+    _plex_update_cache["data"] = data
+    return jsonify(data)
+
+
 @app.route('/api/stats', methods=['GET'])
 def api_stats():
     """Aggregate stats endpoint — designed for Homepage customapi widget.
