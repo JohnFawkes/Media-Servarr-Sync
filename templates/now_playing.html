@@ -164,7 +164,12 @@
 
   @media (max-width: 700px) {
     .np-session { grid-template-columns: 64px 1fr; }
-    .np-map-col { display: none !important; }
+    .np-poster, .np-poster-ph { width: 64px; height: 96px; }
+    .np-map-col {
+      grid-column: 1 / -1;
+      margin-top: 12px;
+    }
+    .np-map-container, .np-map-local { height: 160px; }
   }
 
   .np-poster-wrap a { display: block; }
