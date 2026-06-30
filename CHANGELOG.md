@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - **Plex update notifier** — when Plex Media Server has an update available, a warning box appears next to the Tag Legend on desktop and below it on mobile. The notification is dismissed per-version and the check is cached server-side for 1 hour (`/api/plex-update`).
-- **Now Playing sidebar on wide desktop** — on viewports ≥1300px, the Now Playing mini-card on the Sync tab relocates to a fixed sidebar on the right, freeing up vertical space at the top of the main column. Falls back to the existing inline position below that width.
+- **Now Playing sidebar on wide desktop** — on viewports ≥1440px, the Now Playing mini-card on the Sync tab relocates to a larger fixed sidebar on the right, freeing up vertical space at the top of the main column. Falls back to the existing inline position below that width.
 
 ### Fixed
 - **Mobile tag legend** — the Tag Legend (quality profile, quality, custom format badges) was hidden on screens narrower than 1000px. It now renders as an inline horizontal row above the filter bar on mobile, replacing the desktop fixed sidebar which had no room on small screens.
