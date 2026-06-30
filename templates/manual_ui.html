@@ -582,30 +582,30 @@
     .np-poster-wrap { margin-left: -5px; }
   }
 
-  /* Now Playing → fixed right sidebar on wide desktop viewports */
-  @media (min-width: 1440px) {
-    #now-playing-card {
-      position: fixed;
-      right: 20px;
-      top: 132px;
-      width: 490px;
-      max-height: calc(100vh - 160px);
-      overflow-y: auto;
-      margin-bottom: 0;
-      padding: 24px;
-    }
-    #now-playing-card .np-session { grid-template-columns: 60px 1fr; }
-    #now-playing-card .np-map-col { display: none; }
-    #now-playing-card .np-poster-wrap { margin-left: -5px; }
-    #now-playing-card .card-label {
-      flex-wrap: wrap;
-      row-gap: 8px;
-    }
-    #now-playing-card .card-label > span:last-child {
-      margin-left: 0 !important;
-      width: 100%;
-      justify-content: flex-start;
-    }
+  /* Now Playing → fixed right sidebar, enabled by JS only when there's
+     actually enough room to the right of the shell (so a browser sidebar,
+     split-screen window, devtools panel, etc. doesn't cause overlap). */
+  body.np-sidebar #now-playing-card {
+    position: fixed;
+    right: 20px;
+    top: 132px;
+    width: 490px;
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
+    margin-bottom: 0;
+    padding: 24px;
+  }
+  body.np-sidebar #now-playing-card .np-session { grid-template-columns: 60px 1fr; }
+  body.np-sidebar #now-playing-card .np-map-col { display: none; }
+  body.np-sidebar #now-playing-card .np-poster-wrap { margin-left: -5px; }
+  body.np-sidebar #now-playing-card .card-label {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  body.np-sidebar #now-playing-card .card-label > span:last-child {
+    margin-left: 0 !important;
+    width: 100%;
+    justify-content: flex-start;
   }
   .np-poster-wrap a { display: block; }
   .np-poster {
@@ -1105,12 +1105,22 @@
     hint.textContent = 'Tap for details';
   }
 
-  /* Align Now Playing sidebar top with the Trigger path scan card on wide desktop */
+  /* Now Playing sidebar: only switch to the fixed right-sidebar layout when
+     there's actually enough room to the right of the shell. This is measured
+     directly (instead of a fixed viewport-width media query) so it adapts
+     when a browser sidebar, split-screen window, or devtools panel eats
+     into the available width and would otherwise cause overlap. */
+  var NP_SIDEBAR_WIDTH = 490, NP_SIDEBAR_GAP = 40;
   function alignNowPlayingSidebar() {
     var npCard = document.getElementById('now-playing-card');
+    var shell = document.querySelector('.shell');
     var triggerCard = document.getElementById('trigger-scan-card');
-    if (!npCard || !triggerCard) return;
-    if (!window.matchMedia('(min-width: 1440px)').matches) {
+    if (!npCard || !shell) return;
+    var shellRect = shell.getBoundingClientRect();
+    var available = window.innerWidth - shellRect.right;
+    var fits = available >= (NP_SIDEBAR_WIDTH + NP_SIDEBAR_GAP);
+    document.body.classList.toggle('np-sidebar', fits);
+    if (!fits || !triggerCard) {
       npCard.style.top = '';
       return;
     }

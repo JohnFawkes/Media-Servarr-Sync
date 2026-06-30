@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Now Playing sidebar overlap on desktop** — the wide-desktop sidebar layout for the Sync tab's Now Playing card switched on at a fixed `1440px` viewport-width breakpoint, which could overlap the Trigger Path Scan / Recent Syncs cards when a browser sidebar, split-screen window, or devtools panel reduced the usable content width without crossing that breakpoint. The sidebar layout is now enabled dynamically based on actual measured space to the right of the main content column.
+
 ### Changed
 - Update astral-sh/ruff-action action to v4
 - Update actions/github-script action to v9
