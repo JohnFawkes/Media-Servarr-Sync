@@ -587,11 +587,11 @@
       position: fixed;
       right: 20px;
       top: 132px;
-      width: 460px;
+      width: 575px;
       max-height: calc(100vh - 160px);
       overflow-y: auto;
       margin-bottom: 0;
-      padding: 18px;
+      padding: 24px;
     }
     #now-playing-card .np-session { grid-template-columns: 60px 1fr; }
     #now-playing-card .np-map-col { display: none; }
@@ -1113,6 +1113,9 @@
   }
   alignNowPlayingSidebar();
   window.addEventListener('resize', alignNowPlayingSidebar);
+  window.addEventListener('load', alignNowPlayingSidebar);
+  requestAnimationFrame(alignNowPlayingSidebar);
+  setTimeout(alignNowPlayingSidebar, 300);
 
   /* Plex update notifier */
   var PLEX_UPDATE_LS = 'servarr_plex_update_dismissed';
