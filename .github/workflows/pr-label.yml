@@ -11,7 +11,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Add docker label
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             // Ensure the label exists, then add it to the PR
