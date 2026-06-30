@@ -586,9 +586,9 @@
     #now-playing-card {
       position: fixed;
       right: 20px;
-      top: 32px;
+      top: 132px;
       width: 460px;
-      max-height: calc(100vh - 56px);
+      max-height: calc(100vh - 160px);
       overflow-y: auto;
       margin-bottom: 0;
       padding: 18px;
@@ -805,7 +805,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="trigger-scan-card">
     <div class="card-label">Trigger path scan - (Path needs to be the same as your root path in sonarr or radarr)</div>
     <form method="post"> {# nosemgrep: django-no-csrf-token #}
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -1099,6 +1099,21 @@
     hint.textContent = 'Tap for details';
   }
 
+  /* Align Now Playing sidebar top with the Trigger path scan card on wide desktop */
+  function alignNowPlayingSidebar() {
+    var npCard = document.getElementById('now-playing-card');
+    var triggerCard = document.getElementById('trigger-scan-card');
+    if (!npCard || !triggerCard) return;
+    if (!window.matchMedia('(min-width: 1440px)').matches) {
+      npCard.style.top = '';
+      return;
+    }
+    var rect = triggerCard.getBoundingClientRect();
+    npCard.style.top = Math.max(rect.top, 0) + 'px';
+  }
+  alignNowPlayingSidebar();
+  window.addEventListener('resize', alignNowPlayingSidebar);
+
   /* Plex update notifier */
   var PLEX_UPDATE_LS = 'servarr_plex_update_dismissed';
   function showPlexUpdate(version) {
@@ -1145,6 +1160,7 @@
     activeMaps = {};
     npRendered = false;
     window.onscroll = null;
+    window.removeEventListener('resize', alignNowPlayingSidebar);
   };
 
   /* ---------- search debounce ---------- */
