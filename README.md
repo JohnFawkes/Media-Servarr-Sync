@@ -4,6 +4,13 @@
 
 # Media Servarr Sync
 
+<p align="center">
+  <a href="https://github.com/JohnFawkes/Media-Servarr-Sync/stargazers"><img src="https://img.shields.io/github/stars/JohnFawkes/Media-Servarr-Sync?style=flat-square&color=yellow" alt="GitHub Stars"></a>
+  <a href="https://github.com/JohnFawkes/Media-Servarr-Sync/releases/latest"><img src="https://img.shields.io/github/v/release/JohnFawkes/Media-Servarr-Sync?style=flat-square&color=blue" alt="Latest Release"></a>
+  <a href="https://github.com/JohnFawkes/Media-Servarr-Sync/pkgs/container/media-servarr-sync"><img src="https://img.shields.io/badge/docker-ghcr.io-blue?style=flat-square&logo=docker" alt="Docker"></a>
+  <a href="https://github.com/JohnFawkes/Media-Servarr-Sync/blob/master/LICENSE"><img src="https://img.shields.io/github/license/JohnFawkes/Media-Servarr-Sync?style=flat-square&color=green" alt="License"></a>
+</p>
+
 > ⚠️ **AI-Generated Project** — This project was built with the assistance of [Claude AI](https://claude.ai) by Anthropic. Review all code before running it in your environment.
 
 A lightweight webhook receiver that listens for **Sonarr** and **Radarr** events and triggers a targeted **partial Plex library scan** — no full library refreshes needed. Optionally integrates with **rclone VFS** to clear the cache before scanning (enable only if you use an rclone mount).
@@ -315,6 +322,27 @@ services:
 ```bash
 docker build -t media-servarr-sync .
 ```
+
+---
+
+## Project Statistics
+
+<p align="center">
+  <img
+    src="https://repobeats.axiom.co/api/embed/d9620664a2837e2c06089abf81eda12ba75dac95.svg"
+    alt="Repobeats analytics"
+  />
+</p>
+
+<p align="center">
+  <a href="https://www.star-history.com/#JohnFawkes/Media-Servarr-Sync&type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=JohnFawkes/Media-Servarr-Sync&type=date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=JohnFawkes/Media-Servarr-Sync&type=date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=JohnFawkes/Media-Servarr-Sync&type=date" />
+  </picture>
+  </a>
+</p>
 
 ---
 

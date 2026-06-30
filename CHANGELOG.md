@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **CI linting** — a `ruff` GitHub Actions workflow now runs on Python file changes to catch syntax errors and unused imports.
+- **Plex update notifier** — when Plex Media Server has an update available, a warning box appears next to the Tag Legend on desktop and below it on mobile. The notification is dismissed per-version and the check is cached server-side for 1 hour (`/api/plex-update`).
+- **Now Playing sidebar on wide desktop** — on viewports ≥1440px, the Now Playing mini-card on the Sync tab relocates to a larger fixed sidebar on the right, freeing up vertical space at the top of the main column. Falls back to the existing inline position below that width.
+
+### Fixed
+- **Mobile tag legend** — the Tag Legend (quality profile, quality, custom format badges) was hidden on screens narrower than 1000px. It now renders as an inline horizontal row above the filter bar on mobile, replacing the desktop fixed sidebar which had no room on small screens.
+- **Touch device legend hint** — the legend's interaction hint now reads "Tap for details" on touch-primary devices (detected via `hover: none` media query) instead of "Hover for details".
+- **Mobile Now Playing map** — a CSS source-order bug caused the per-session location map on the Now Playing page to stay visible (squeezed tall and skinny) on screens narrower than 700px instead of being hidden.
+- **Mobile Now Playing layout** — the session poster was rendered at its full desktop size (80×120) on narrow screens, overflowing its 64px-wide grid column and overlapping the title/info text. The poster now scales down to fit on mobile and is nudged left for tighter alignment with the info column. The location map, previously hidden below 700px, now renders full-width beneath the poster/info row instead of being removed.
+- **Plex update notifier showing on the wrong tab** — the notifier box lives outside the PJAX-swapped content area, so navigating away from the Sync tab left it visible on Now Playing/Invites instead of hiding it. It's now explicitly hidden when leaving the Sync tab, matching the existing Tag Legend / back-to-top behavior.
+
 ---
 
 ## [v0.21.2] - 2026-06-28
