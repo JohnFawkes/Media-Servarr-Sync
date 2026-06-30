@@ -27,7 +27,6 @@ import sqlite3
 import ipaddress
 import math
 import secrets as _secrets
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps

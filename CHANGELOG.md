@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **CI linting** — a `ruff` GitHub Actions workflow now runs on Python file changes to catch syntax errors and unused imports.
 - **Plex update notifier** — when Plex Media Server has an update available, a warning box appears next to the Tag Legend on desktop and below it on mobile. The notification is dismissed per-version and the check is cached server-side for 1 hour (`/api/plex-update`).
 - **Now Playing sidebar on wide desktop** — on viewports ≥1440px, the Now Playing mini-card on the Sync tab relocates to a larger fixed sidebar on the right, freeing up vertical space at the top of the main column. Falls back to the existing inline position below that width.
 
