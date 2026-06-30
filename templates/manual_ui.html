@@ -740,7 +740,7 @@
       <span class="legend-inline-item"><span class="legend-swatch tag-qp">Profile</span> Quality Profile</span>
       <span class="legend-inline-item"><span class="legend-swatch tag-quality">Quality</span> Quality</span>
       <span class="legend-inline-item"><span class="legend-swatch tag-cf">Format</span> Custom Format</span>
-      <span class="legend-inline-item"><span class="episode-count-badge" style="pointer-events:none;">2 eps</span> Hover for details</span>
+      <span class="legend-inline-item"><span class="episode-count-badge" style="pointer-events:none;">2 eps</span> <span id="legend-interaction-hint">Hover for details</span></span>
     </div>
     <div class="filter-bar">
       <form method="get" style="display:contents">
@@ -991,6 +991,12 @@
 <script id="page-init">
 (function() {
   var tick = null, npTick = null, activeMaps = {}, npRendered = false;
+
+  /* Swap legend hint text for touch devices */
+  var hint = document.getElementById('legend-interaction-hint');
+  if (hint && window.matchMedia('(hover: none)').matches) {
+    hint.textContent = 'Tap for details';
+  }
 
   window.__pjaxCleanup = function() {
     clearInterval(tick); clearInterval(npTick);
