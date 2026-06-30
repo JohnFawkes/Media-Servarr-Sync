@@ -1039,9 +1039,13 @@
         /* hide sync-only chrome BEFORE the CSS swap to prevent layout flash */
         var btt = document.getElementById('back-to-top');
         var leg = document.querySelector('.legend');
+        var pub = document.getElementById('plex-update-box');
+        var pui = document.getElementById('plex-update-inline');
         if (!onSync) {
           if (btt) { btt.classList.remove('visible'); btt.style.display = 'none'; }
           if (leg) leg.style.display = 'none';
+          if (pub) pub.style.display = 'none';
+          if (pui) pui.style.display = 'none';
         }
         var nc = doc.getElementById('page-content');
         var cc = document.getElementById('page-content');
