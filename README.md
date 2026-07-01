@@ -56,6 +56,9 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 * **Dashboard (Sync History)**
 ![Episode Count Hover & WebUI Dashboard](screenshots/episode_count.png)
 
+* **Dashboard (Wide — with sidebars)**
+![Dashboard wide desktop with sidebars](screenshots/dashboard_wide.png)
+
 * **Invite Management**
 ![Invites](screenshots/invites.png)
 
