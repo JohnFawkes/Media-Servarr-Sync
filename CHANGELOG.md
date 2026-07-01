@@ -6,8 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Server Stats on Sync tab** — CPU (system/Plex %), RAM (system/Plex %), and bandwidth (LAN/WAN) are now shown as a compact mini-card on the Sync tab, refreshing every 30 s with a countdown timer and manual refresh button.
+- **Full Library Scan on Sync tab** — the library section picker and Scan button previously found on the Now Playing tab are now available directly on the Sync tab.
+
+### Removed
+- **Now Playing tab** — the dedicated `/now-playing` route and `now_playing.html` template have been removed. All functionality has migrated to the Sync tab: the Now Playing mini-card (active streams) was already there; Server Stats and Full Library Scan have been added this release.
+
 ### Fixed
 - **Now Playing sidebar overlap on desktop** — the wide-desktop sidebar layout for the Sync tab's Now Playing card switched on at a fixed `1440px` viewport-width breakpoint, which could overlap the Trigger Path Scan / Recent Syncs cards when a browser sidebar, split-screen window, or devtools panel reduced the usable content width without crossing that breakpoint. The sidebar layout is now enabled dynamically based on actual measured space to the right of the main content column.
+- **Episode tooltip viewport clip** — on history rows with very long file names, the `.ep-tooltip` hover card extended past the right edge of the viewport. It now anchors to the right side of the badge and extends leftward, with a `max-width` of `min(640px, 90vw)`.
 
 ### Changed
 - Update astral-sh/ruff-action action to v4
