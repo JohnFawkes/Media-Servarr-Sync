@@ -37,11 +37,11 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Episode display** — for Sonarr events, the episode filename (e.g. `Show.S01E01.mkv`) is shown beneath the season folder path; batch imports show an episode-count badge that reveals all individual filenames on hover (filenames wrap fully, no truncation)
 - **Quality & profile tags** — each history entry displays colour-coded tags for the file quality (blue), quality profile (green, resolved via the Sonarr/Radarr API), and any custom formats (purple); hover a tag to see its label
 - **Filterable tags** — click any quality or profile tag to filter the history list to matching entries; active filters appear as dismissible pills in the filter bar and are preserved across search and pagination
-- **Tag colour legend** — a fixed panel on the left of the Sync UI explains what each tag colour means; hidden automatically on narrow viewports
+- **Tag colour legend** — a horizontal fixed panel to the left of the Sync UI explains what each tag colour means; visible on wide viewports where there's room beside the main column, hidden on narrow screens
 - **Configurable auto-refresh** — set the refresh interval for Now Playing and Sync history independently via a number input on each card; `0` = live (1-second polling), `-1` = off, any positive integer = interval in seconds with a live countdown. Preference persists in `localStorage` across page loads and tab switches
-- **Now Playing** — dedicated tab showing all active Plex streams with player info, artwork, progress bar, stream quality (including **HW Transcode** detection), and an interactive map showing the player's approximate location
-- **Server stats** — live CPU % and RAM % rolling charts (System vs Plex process, 5-minute window) and current LAN/WAN bandwidth, powered by the Plex `/statistics/resources` and `/statistics/bandwidth` APIs; polled every 10 s with no external CDN
-- **Full library scan** — trigger a full Plex section scan from the Now Playing page via a library selector dropdown
+- **Now Playing** — active Plex streams shown directly on the Sync tab: player info, artwork, progress bar, stream quality (including **HW Transcode** detection), and an interactive map of the player's approximate location. On wide viewports the card pins as a fixed left sidebar below the tag legend
+- **Server stats** — live CPU % and RAM % sparkline charts (System vs Plex process) and current LAN/WAN bandwidth, shown directly on the Sync tab. Powered by the Plex `/statistics/resources` and `/statistics/bandwidth` APIs; polled every 30 s with no external CDN. On wide viewports the card pins as a fixed right sidebar
+- **Full library scan** — trigger a full Plex section scan directly from the Sync tab via a library selector dropdown
 - **Invite management** — create time-limited invite links for new Plex users; configure allowed libraries, permissions, max uses, and expiry; track and revoke accepted invites
 - **Single-page navigation** — tab switching uses PJAX (in-place content swap) with no full page reload
 - **Self-hosted fonts** — IBM Plex Mono and IBM Plex Sans are served from the container; no external CDN requests, works behind strict reverse proxies
@@ -56,8 +56,8 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 * **Dashboard (Sync History)**
 ![Episode Count Hover & WebUI Dashboard](screenshots/episode_count.png)
 
-* **Now Playing**
-![Now Playing](screenshots/now_playing.png)
+* **Dashboard (Wide — with sidebars)**
+![Dashboard wide desktop with sidebars](screenshots/dashboard_wide.png)
 
 * **Invite Management**
 ![Invites](screenshots/invites.png)
@@ -186,8 +186,7 @@ SECTION_MAPPING={ "/mnt/media/tv": "1", "/mnt/media/movies": "2" }
 |---|---|---|---|
 | `/webhook/sonarr` | POST | None | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | None | Radarr webhook receiver |
-| `/` | GET / POST | Session | Sync tab — manual trigger + history |
-| `/now-playing` | GET | Session | Now Playing tab — active Plex streams |
+| `/` | GET / POST | Session | Sync tab — manual trigger, history, Now Playing, Server Stats |
 | `/invites` | GET | Session | Invite management tab |
 | `/invite/<token>` | GET | None | Public invite landing page |
 | `/health` | GET | None | JSON health check + recent history |
