@@ -398,8 +398,8 @@
   .legend {
     position: fixed;
     left: 20px;
-    top: 48px;
-    width: 280px;
+    top: 132px;
+    width: 490px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -476,7 +476,7 @@
   .plex-update-box {
     position: fixed;
     left: 20px;
-    width: 280px;
+    width: 490px;
     background: var(--surface);
     border: 1px solid var(--warn);
     border-radius: var(--radius);
@@ -638,25 +638,16 @@
     position: fixed;
     left: 20px;
     top: 200px; /* overridden by JS to legend.bottom + gap */
-    width: 280px;
+    width: 490px;
     max-height: calc(100vh - 220px);
     overflow-y: auto;
     margin-bottom: 0;
-    padding: 18px;
+    padding: 24px;
   }
-  body.np-left #now-playing-card .np-session {
-    grid-template-columns: 52px 1fr;
-    gap: 10px;
-  }
+  body.np-left #now-playing-card .np-session { grid-template-columns: 60px 1fr; }
   body.np-left #now-playing-card .np-map-col { display: none; }
-  body.np-left #now-playing-card .np-poster { width: 52px; height: 78px; }
-  body.np-left #now-playing-card .np-poster-ph { width: 52px; height: 78px; font-size: 18px; }
-  body.np-left #now-playing-card .np-title { font-size: 11px; }
-  body.np-left #now-playing-card .np-show { font-size: 11px; }
-  body.np-left #now-playing-card .np-sub { font-size: 10px; }
-  body.np-left #now-playing-card .np-user { font-size: 10px; }
-  body.np-left #now-playing-card .np-quality { font-size: 10px; }
-  body.np-left #now-playing-card .card-label { flex-wrap: wrap; row-gap: 6px; }
+  body.np-left #now-playing-card .np-poster-wrap { margin-left: -5px; }
+  body.np-left #now-playing-card .card-label { flex-wrap: wrap; row-gap: 8px; }
   body.np-left #now-playing-card .card-label > span:last-child {
     margin-left: 0 !important;
     width: 100%;
@@ -1223,7 +1214,7 @@
      LEFT: Now Playing card sits below the tag legend (280 px wide).
      RIGHT: Server Stats charts (490 px wide).
      Each side activates independently based on available space. */
-  var NP_LEFT_WIDTH = 280, NP_LEFT_GAP = 20;
+  var NP_LEFT_WIDTH = 490, NP_LEFT_GAP = 40;
   var STATS_WIDTH   = 490, STATS_GAP   = 40;
   function alignSidebars() {
     var npCard    = document.getElementById('now-playing-card');
@@ -1233,13 +1224,16 @@
     if (!shell) return;
     var shellRect = shell.getBoundingClientRect();
 
-    /* ---- LEFT: Now Playing ---- */
+    /* ---- LEFT: Tag legend + Now Playing ---- */
     var leftAvail = shellRect.left;
     var fitsLeft  = leftAvail >= (NP_LEFT_WIDTH + NP_LEFT_GAP);
     document.body.classList.toggle('np-left', fitsLeft);
+    /* hide the legend when there isn't room for it — CSS only shows it above
+       1000px, but at 490px width we need ~1700px+ viewport */
+    if (legend) legend.style.display = fitsLeft ? '' : 'none';
     if (fitsLeft && npCard) {
       requestAnimationFrame(function() {
-        var leg = legend || document.querySelector('.legend');
+        var leg = document.querySelector('.legend');
         if (leg) {
           var lr = leg.getBoundingClientRect();
           npCard.style.top = (lr.bottom + 12) + 'px';
