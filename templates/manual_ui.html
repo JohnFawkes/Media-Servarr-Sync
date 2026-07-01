@@ -582,22 +582,27 @@
     .np-poster-wrap { margin-left: -5px; }
   }
 
-  /* -------- Server Stats mini card -------- */
-  .stats-mini-row {
-    display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;
+  /* -------- Server Stats charts -------- */
+  .stats-chart-group { margin-bottom: 14px; }
+  .stats-chart-group:last-child { margin-bottom: 0; }
+  .stats-chart-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .stats-chart-label { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+  .stats-chart-vals { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text); }
+  .stats-chart-canvas { width: 100%; height: 40px; display: block; border-radius: 3px; background: rgba(255,255,255,0.02); }
+  .stats-chart-legend { display: flex; gap: 10px; margin-top: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--muted); align-items: center; }
+  .stats-legend-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Stats card → fixed right sidebar (stacked above Now Playing) */
+  body.stats-sidebar #server-stats-card {
+    position: fixed;
+    right: 20px;
+    top: 132px;
+    width: 490px;
+    max-height: calc(50vh - 60px);
+    overflow-y: auto;
+    margin-bottom: 0;
+    padding: 24px;
   }
-  .stats-mini-group {
-    display: flex; flex-direction: column; gap: 3px; min-width: 120px;
-  }
-  .stats-mini-label {
-    font-family: 'IBM Plex Mono', monospace; font-size: 9px;
-    letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
-  }
-  .stats-mini-vals {
-    display: flex; gap: 10px;
-    font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text);
-  }
-  .stats-mini-sub { font-size: 9px; color: var(--muted); }
 
   /* -------- Library scan card -------- */
   #library-select {
@@ -853,8 +858,40 @@
         <button type="button" id="stats-refresh-btn" class="refresh-btn" title="Refresh now">↻</button>
       </span>
     </div>
-    <div id="server-stats-body" class="stats-mini-row">
-      <span style="color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:11px;">Loading…</span>
+    <div id="server-stats-body">
+      <div class="stats-chart-group">
+        <div class="stats-chart-header">
+          <span class="stats-chart-label">CPU</span>
+          <span class="stats-chart-vals" id="stats-cpu-vals">—</span>
+        </div>
+        <canvas id="stats-cpu-chart" class="stats-chart-canvas"></canvas>
+        <div class="stats-chart-legend">
+          <span class="stats-legend-dot" style="background:#60a5fa"></span>System
+          <span class="stats-legend-dot" style="background:#e5a00d"></span>Plex
+        </div>
+      </div>
+      <div class="stats-chart-group">
+        <div class="stats-chart-header">
+          <span class="stats-chart-label">RAM</span>
+          <span class="stats-chart-vals" id="stats-ram-vals">—</span>
+        </div>
+        <canvas id="stats-ram-chart" class="stats-chart-canvas"></canvas>
+        <div class="stats-chart-legend">
+          <span class="stats-legend-dot" style="background:#60a5fa"></span>System
+          <span class="stats-legend-dot" style="background:#e5a00d"></span>Plex
+        </div>
+      </div>
+      <div class="stats-chart-group">
+        <div class="stats-chart-header">
+          <span class="stats-chart-label">Bandwidth</span>
+          <span class="stats-chart-vals" id="stats-bw-vals">—</span>
+        </div>
+        <canvas id="stats-bw-chart" class="stats-chart-canvas"></canvas>
+        <div class="stats-chart-legend">
+          <span class="stats-legend-dot" style="background:#4ade80"></span>LAN
+          <span class="stats-legend-dot" style="background:#a78bfa"></span>WAN
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1160,6 +1197,8 @@
 <script id="page-init">
 (function() {
   var tick = null, npTick = null, statsTick = null, activeMaps = {}, npRendered = false;
+  var statsHistory = { cpu_sys: [], cpu_plex: [], ram_sys: [], ram_plex: [], lan: [], wan: [] };
+  var STATS_BUF = 20;
 
   /* Swap legend hint text for touch devices */
   var hint = document.getElementById('legend-interaction-hint');
@@ -1167,33 +1206,50 @@
     hint.textContent = 'Tap for details';
   }
 
-  /* Now Playing sidebar: only switch to the fixed right-sidebar layout when
-     there's actually enough room to the right of the shell. This is measured
-     directly (instead of a fixed viewport-width media query) so it adapts
-     when a browser sidebar, split-screen window, or devtools panel eats
-     into the available width and would otherwise cause overlap. */
+  /* Sidebar layout: both the Now Playing card and Server Stats card move to a
+     fixed right column when there's actually enough room. Measured directly
+     (instead of a fixed viewport-width breakpoint) so a browser sidebar,
+     devtools panel, or split-screen window doesn't cause overlap.
+     Stats sits at the top; NP is positioned dynamically below it. */
   var NP_SIDEBAR_WIDTH = 490, NP_SIDEBAR_GAP = 40;
-  function alignNowPlayingSidebar() {
-    var npCard = document.getElementById('now-playing-card');
-    var shell = document.querySelector('.shell');
-    var triggerCard = document.getElementById('trigger-scan-card');
-    if (!npCard || !shell) return;
+  function alignSidebars() {
+    var npCard    = document.getElementById('now-playing-card');
+    var statsCard = document.getElementById('server-stats-card');
+    var shell     = document.querySelector('.shell');
+    if (!shell) return;
     var shellRect = shell.getBoundingClientRect();
     var available = window.innerWidth - shellRect.right;
     var fits = available >= (NP_SIDEBAR_WIDTH + NP_SIDEBAR_GAP);
     document.body.classList.toggle('np-sidebar', fits);
-    if (!fits || !triggerCard) {
-      npCard.style.top = '';
+    document.body.classList.toggle('stats-sidebar', fits);
+    if (!fits) {
+      if (npCard)    npCard.style.top    = '';
+      if (statsCard) statsCard.style.top = '';
       return;
     }
-    var rect = triggerCard.getBoundingClientRect();
-    npCard.style.top = Math.max(rect.top, 0) + 'px';
+    if (statsCard) statsCard.style.top = '132px';
+    /* NP goes below stats — wait one frame so stats has been painted */
+    if (npCard) {
+      requestAnimationFrame(function() {
+        if (statsCard) {
+          var sb = statsCard.getBoundingClientRect();
+          npCard.style.top = (sb.bottom + 16) + 'px';
+        } else {
+          var tc = document.getElementById('trigger-scan-card');
+          if (tc) npCard.style.top = Math.max(tc.getBoundingClientRect().top, 0) + 'px';
+        }
+        /* Redraw charts so canvases fill their new sidebar width */
+        redrawAllCharts();
+      });
+    } else {
+      requestAnimationFrame(redrawAllCharts);
+    }
   }
-  alignNowPlayingSidebar();
-  window.addEventListener('resize', alignNowPlayingSidebar);
-  window.addEventListener('load', alignNowPlayingSidebar);
-  requestAnimationFrame(alignNowPlayingSidebar);
-  setTimeout(alignNowPlayingSidebar, 300);
+  alignSidebars();
+  window.addEventListener('resize', alignSidebars);
+  window.addEventListener('load', alignSidebars);
+  requestAnimationFrame(alignSidebars);
+  setTimeout(alignSidebars, 300);
 
   /* Plex update notifier */
   var PLEX_UPDATE_LS = 'servarr_plex_update_dismissed';
@@ -1241,7 +1297,7 @@
     activeMaps = {};
     npRendered = false;
     window.onscroll = null;
-    window.removeEventListener('resize', alignNowPlayingSidebar);
+    window.removeEventListener('resize', alignSidebars);
   };
 
   /* ---------- search debounce ---------- */
@@ -1497,59 +1553,110 @@
   if (npBtn) npBtn.addEventListener('click', doNpRefresh);
   doNpRefresh();
 
-  /* ---------- Server Stats mini ---------- */
+  /* ---------- Server Stats charts ---------- */
   var STATS_INTERVAL = 30, statsRemaining = STATS_INTERVAL;
   var statsBtn = document.getElementById('stats-refresh-btn');
   var statsCountdownEl = document.getElementById('stats-mini-countdown');
 
   function fmtBytes(b) {
-    if (!b || b < 1024) return (b || 0) + ' B';
-    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
-    if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
-    return (b / 1073741824).toFixed(2) + ' GB';
+    if (!b || b < 1024) return (b || 0) + ' B/s';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB/s';
+    if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB/s';
+    return (b / 1073741824).toFixed(2) + ' GB/s';
   }
 
-  function renderStatsMini(data) {
-    var body = document.getElementById('server-stats-body');
-    if (!body) return;
+  function pushBuf(arr, val) {
+    arr.push(val != null ? val : 0);
+    if (arr.length > STATS_BUF) arr.shift();
+  }
+
+  function drawSparkline(canvasId, series, colors, maxVal) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas || !canvas.getContext) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = canvas.offsetWidth || 440, h = canvas.offsetHeight || 40;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(255,255,255,0.02)';
+    ctx.fillRect(0, 0, w, h);
+    /* faint grid at 25 / 50 / 75 % */
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    [0.25, 0.5, 0.75].forEach(function(pct) {
+      var y = Math.round(h - pct * h) + 0.5;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    });
+    var n = STATS_BUF, mx = maxVal || 1;
+    series.forEach(function(pts, si) {
+      if (!pts || pts.length < 2) return;
+      var color = colors[si];
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.lineJoin = 'round';
+      for (var i = 0; i < pts.length; i++) {
+        var x = (i / (n - 1)) * w;
+        var y = h - Math.min(1, pts[i] / mx) * (h - 3) - 1.5;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      /* area fill */
+      ctx.save();
+      ctx.globalAlpha = 0.1;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      for (var j = 0; j < pts.length; j++) {
+        var xx = (j / (n - 1)) * w;
+        var yy = h - Math.min(1, pts[j] / mx) * (h - 3) - 1.5;
+        if (j === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+      }
+      ctx.lineTo(((pts.length - 1) / (n - 1)) * w, h);
+      ctx.lineTo(0, h);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function redrawAllCharts() {
+    var bwMax = Math.max.apply(null, statsHistory.lan.concat(statsHistory.wan).concat([1024]));
+    drawSparkline('stats-cpu-chart', [statsHistory.cpu_sys, statsHistory.cpu_plex], ['#60a5fa', '#e5a00d'], 100);
+    drawSparkline('stats-ram-chart', [statsHistory.ram_sys, statsHistory.ram_plex], ['#60a5fa', '#e5a00d'], 100);
+    drawSparkline('stats-bw-chart',  [statsHistory.lan,     statsHistory.wan],      ['#4ade80', '#a78bfa'], bwMax);
+  }
+
+  function renderStatsCharts(data) {
     var r = data && data.resources, bw = data && data.bandwidth;
-    if (!r && !bw) { body.innerHTML = '<span style="color:var(--muted);font-family:\'IBM Plex Mono\',monospace;font-size:11px;">Stats unavailable</span>'; return; }
-    var html = '';
-    if (r) {
-      html +=
-        '<div class="stats-mini-group">'
-        + '<div class="stats-mini-label">CPU</div>'
-        + '<div class="stats-mini-vals">'
-        + '<span>Sys <strong>' + (r.host_cpu_pct != null ? r.host_cpu_pct.toFixed(1) + '%' : '—') + '</strong></span>'
-        + '<span class="stats-mini-sub">·</span>'
-        + '<span>Plex <strong>' + (r.process_cpu_pct != null ? r.process_cpu_pct.toFixed(1) + '%' : '—') + '</strong></span>'
-        + '</div></div>'
-        + '<div class="stats-mini-group">'
-        + '<div class="stats-mini-label">RAM</div>'
-        + '<div class="stats-mini-vals">'
-        + '<span>Sys <strong>' + (r.host_ram_pct != null ? r.host_ram_pct.toFixed(1) + '%' : '—') + '</strong></span>'
-        + '<span class="stats-mini-sub">·</span>'
-        + '<span>Plex <strong>' + (r.process_ram_pct != null ? r.process_ram_pct.toFixed(1) + '%' : '—') + '</strong></span>'
-        + '</div></div>';
-    }
-    if (bw) {
-      html +=
-        '<div class="stats-mini-group">'
-        + '<div class="stats-mini-label">Bandwidth</div>'
-        + '<div class="stats-mini-vals">'
-        + '<span>LAN <strong>' + fmtBytes(bw.lan_bytes) + '</strong></span>'
-        + '<span class="stats-mini-sub">·</span>'
-        + '<span>WAN <strong>' + fmtBytes(bw.wan_bytes) + '</strong></span>'
-        + '</div></div>';
-    }
-    body.innerHTML = html;
+    /* accumulate history */
+    pushBuf(statsHistory.cpu_sys,  r && r.host_cpu_pct);
+    pushBuf(statsHistory.cpu_plex, r && r.process_cpu_pct);
+    pushBuf(statsHistory.ram_sys,  r && r.host_ram_pct);
+    pushBuf(statsHistory.ram_plex, r && r.process_ram_pct);
+    pushBuf(statsHistory.lan,      bw && bw.lan_bytes);
+    pushBuf(statsHistory.wan,      bw && bw.wan_bytes);
+    /* update value labels */
+    var cpuEl = document.getElementById('stats-cpu-vals');
+    if (cpuEl && r) cpuEl.textContent =
+      'Sys ' + (r.host_cpu_pct != null ? r.host_cpu_pct.toFixed(1) + '%' : '—')
+      + '  ·  Plex ' + (r.process_cpu_pct != null ? r.process_cpu_pct.toFixed(1) + '%' : '—');
+    var ramEl = document.getElementById('stats-ram-vals');
+    if (ramEl && r) ramEl.textContent =
+      'Sys ' + (r.host_ram_pct != null ? r.host_ram_pct.toFixed(1) + '%' : '—')
+      + '  ·  Plex ' + (r.process_ram_pct != null ? r.process_ram_pct.toFixed(1) + '%' : '—');
+    var bwEl = document.getElementById('stats-bw-vals');
+    if (bwEl && bw) bwEl.textContent =
+      'LAN ' + fmtBytes(bw.lan_bytes) + '  ·  WAN ' + fmtBytes(bw.wan_bytes);
+    /* draw sparklines */
+    redrawAllCharts();
   }
 
   function doStatsRefresh() {
     if (statsBtn) statsBtn.classList.add('spinning');
     fetch('/api/server-stats', {cache: 'no-store'})
       .then(function(r) { return r.ok ? r.json() : null; })
-      .then(function(d) { if (d) renderStatsMini(d); })
+      .then(function(d) { if (d) renderStatsCharts(d); })
       .catch(function() {})
       .finally(function() { if (statsBtn) statsBtn.classList.remove('spinning'); });
   }
