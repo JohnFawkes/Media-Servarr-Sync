@@ -399,30 +399,34 @@
     position: fixed;
     left: 20px;
     top: 48px;
-    width: 160px;
+    width: 280px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 14px 16px;
+    padding: 12px 14px;
     font-family: 'IBM Plex Mono', monospace;
   }
   .legend-title {
-    font-size: 10px;
+    font-size: 9px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--muted);
-    margin-bottom: 12px;
+    margin-bottom: 8px;
+  }
+  .legend-items-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    align-items: center;
   }
   .legend-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 9px;
+    gap: 5px;
   }
-  .legend-item:last-child { margin-bottom: 0; }
   .legend-swatch {
     display: inline-block;
-    padding: 2px 7px;
+    padding: 2px 6px;
     border-radius: 3px;
     font-size: 10px;
     font-weight: 500;
@@ -433,6 +437,7 @@
     font-size: 10px;
     color: var(--muted);
     letter-spacing: 0.03em;
+    white-space: nowrap;
   }
   @media (max-width: 1000px) { .legend { display: none; } }
 
@@ -471,7 +476,7 @@
   .plex-update-box {
     position: fixed;
     left: 20px;
-    width: 160px;
+    width: 280px;
     background: var(--surface);
     border: 1px solid var(--warn);
     border-radius: var(--radius);
@@ -627,27 +632,32 @@
   #library-scan-btn:hover { opacity: 0.85; }
   #library-scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  /* Now Playing → fixed right sidebar, enabled by JS only when there's
-     actually enough room to the right of the shell (so a browser sidebar,
-     split-screen window, devtools panel, etc. doesn't cause overlap). */
-  body.np-sidebar #now-playing-card {
+  /* Now Playing → fixed LEFT sidebar, below the tag legend.
+     Enabled by JS only when there's enough room on the left of the shell. */
+  body.np-left #now-playing-card {
     position: fixed;
-    right: 20px;
-    top: 132px;
-    width: 490px;
-    max-height: calc(100vh - 160px);
+    left: 20px;
+    top: 200px; /* overridden by JS to legend.bottom + gap */
+    width: 280px;
+    max-height: calc(100vh - 220px);
     overflow-y: auto;
     margin-bottom: 0;
-    padding: 24px;
+    padding: 18px;
   }
-  body.np-sidebar #now-playing-card .np-session { grid-template-columns: 60px 1fr; }
-  body.np-sidebar #now-playing-card .np-map-col { display: none; }
-  body.np-sidebar #now-playing-card .np-poster-wrap { margin-left: -5px; }
-  body.np-sidebar #now-playing-card .card-label {
-    flex-wrap: wrap;
-    row-gap: 8px;
+  body.np-left #now-playing-card .np-session {
+    grid-template-columns: 52px 1fr;
+    gap: 10px;
   }
-  body.np-sidebar #now-playing-card .card-label > span:last-child {
+  body.np-left #now-playing-card .np-map-col { display: none; }
+  body.np-left #now-playing-card .np-poster { width: 52px; height: 78px; }
+  body.np-left #now-playing-card .np-poster-ph { width: 52px; height: 78px; font-size: 18px; }
+  body.np-left #now-playing-card .np-title { font-size: 11px; }
+  body.np-left #now-playing-card .np-show { font-size: 11px; }
+  body.np-left #now-playing-card .np-sub { font-size: 10px; }
+  body.np-left #now-playing-card .np-user { font-size: 10px; }
+  body.np-left #now-playing-card .np-quality { font-size: 10px; }
+  body.np-left #now-playing-card .card-label { flex-wrap: wrap; row-gap: 6px; }
+  body.np-left #now-playing-card .card-label > span:last-child {
     margin-left: 0 !important;
     width: 100%;
     justify-content: flex-start;
@@ -787,21 +797,23 @@
 <button id="back-to-top" title="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑ Top</button>
 <aside class="legend">
   <div class="legend-title">Tag Legend</div>
-  <div class="legend-item">
-    <span class="legend-swatch tag-qp">Profile</span>
-    <span class="legend-label">Quality<br>Profile</span>
-  </div>
-  <div class="legend-item">
-    <span class="legend-swatch tag-quality">Quality</span>
-    <span class="legend-label">Quality</span>
-  </div>
-  <div class="legend-item">
-    <span class="legend-swatch tag-cf">Format</span>
-    <span class="legend-label">Custom<br>Format</span>
-  </div>
-  <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:10px;">
-    <div style="margin-bottom:6px;"><span class="episode-count-badge">2 episodes</span></div>
-    <div class="legend-label" style="line-height:1.6">Hover the badge<br>to see per-file<br>details</div>
+  <div class="legend-items-row">
+    <div class="legend-item">
+      <span class="legend-swatch tag-qp">Profile</span>
+      <span class="legend-label">Quality Profile</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-swatch tag-quality">Quality</span>
+      <span class="legend-label">Quality</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-swatch tag-cf">Format</span>
+      <span class="legend-label">Custom Format</span>
+    </div>
+    <div class="legend-item">
+      <span class="episode-count-badge" style="pointer-events:none;font-size:9px;">2 eps</span>
+      <span class="legend-label">Hover for details</span>
+    </div>
   </div>
 </aside>
 <div class="plex-update-box" id="plex-update-box">
@@ -1206,44 +1218,43 @@
     hint.textContent = 'Tap for details';
   }
 
-  /* Sidebar layout: both the Now Playing card and Server Stats card move to a
-     fixed right column when there's actually enough room. Measured directly
-     (instead of a fixed viewport-width breakpoint) so a browser sidebar,
-     devtools panel, or split-screen window doesn't cause overlap.
-     Stats sits at the top; NP is positioned dynamically below it. */
-  var NP_SIDEBAR_WIDTH = 490, NP_SIDEBAR_GAP = 40;
+  /* Sidebar layout — measured directly so browser sidebars / split windows
+     don't cause overlap.
+     LEFT: Now Playing card sits below the tag legend (280 px wide).
+     RIGHT: Server Stats charts (490 px wide).
+     Each side activates independently based on available space. */
+  var NP_LEFT_WIDTH = 280, NP_LEFT_GAP = 20;
+  var STATS_WIDTH   = 490, STATS_GAP   = 40;
   function alignSidebars() {
     var npCard    = document.getElementById('now-playing-card');
     var statsCard = document.getElementById('server-stats-card');
     var shell     = document.querySelector('.shell');
+    var legend    = document.querySelector('.legend');
     if (!shell) return;
     var shellRect = shell.getBoundingClientRect();
-    var available = window.innerWidth - shellRect.right;
-    var fits = available >= (NP_SIDEBAR_WIDTH + NP_SIDEBAR_GAP);
-    document.body.classList.toggle('np-sidebar', fits);
-    document.body.classList.toggle('stats-sidebar', fits);
-    if (!fits) {
-      if (npCard)    npCard.style.top    = '';
-      if (statsCard) statsCard.style.top = '';
-      return;
-    }
-    if (statsCard) statsCard.style.top = '132px';
-    /* NP goes below stats — wait one frame so stats has been painted */
-    if (npCard) {
+
+    /* ---- LEFT: Now Playing ---- */
+    var leftAvail = shellRect.left;
+    var fitsLeft  = leftAvail >= (NP_LEFT_WIDTH + NP_LEFT_GAP);
+    document.body.classList.toggle('np-left', fitsLeft);
+    if (fitsLeft && npCard) {
       requestAnimationFrame(function() {
-        if (statsCard) {
-          var sb = statsCard.getBoundingClientRect();
-          npCard.style.top = (sb.bottom + 16) + 'px';
-        } else {
-          var tc = document.getElementById('trigger-scan-card');
-          if (tc) npCard.style.top = Math.max(tc.getBoundingClientRect().top, 0) + 'px';
+        var leg = legend || document.querySelector('.legend');
+        if (leg) {
+          var lr = leg.getBoundingClientRect();
+          npCard.style.top = (lr.bottom + 12) + 'px';
         }
-        /* Redraw charts so canvases fill their new sidebar width */
-        redrawAllCharts();
       });
-    } else {
-      requestAnimationFrame(redrawAllCharts);
+    } else if (npCard) {
+      npCard.style.top = '';
     }
+
+    /* ---- RIGHT: Server Stats ---- */
+    var rightAvail = window.innerWidth - shellRect.right;
+    var fitsRight  = rightAvail >= (STATS_WIDTH + STATS_GAP);
+    document.body.classList.toggle('stats-sidebar', fitsRight);
+    if (statsCard) statsCard.style.top = fitsRight ? '132px' : '';
+    if (fitsRight) requestAnimationFrame(redrawAllCharts);
   }
   alignSidebars();
   window.addEventListener('resize', alignSidebars);
@@ -1590,7 +1601,9 @@
     });
     var n = STATS_BUF, mx = maxVal || 1;
     series.forEach(function(pts, si) {
-      if (!pts || pts.length < 2) return;
+      if (!pts || !pts.length) return;
+      /* pad to at least 2 points so a flat line draws on the first poll */
+      var pts = pts.length < 2 ? [pts[0], pts[0]] : pts;
       var color = colors[si];
       ctx.beginPath();
       ctx.strokeStyle = color;
