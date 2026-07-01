@@ -185,20 +185,20 @@
   .ep-tooltip {
     display: none;
     position: absolute;
-    left: 0; top: calc(100% + 4px);
+    right: 0; left: auto; top: calc(100% + 4px);
     background: var(--surface);
     border: 1px solid var(--accent);
     border-radius: var(--radius);
     padding: 6px 10px;
-    width: max-content; max-width: none;
-  z-index: 50;
+    width: max-content; max-width: min(640px, 90vw);
+    z-index: 50;
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   }
   .ep-wrap:hover .ep-tooltip { display: block; }
   .ep-tip-row {
     font-size: 10px; color: var(--text);
     padding: 3px 0; border-bottom: 1px solid var(--border);
-    white-space: nowrap;
+    white-space: normal;
   }
   .ep-tip-row:last-child { border-bottom: none; }
   .ep-tip-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
