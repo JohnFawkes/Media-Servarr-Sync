@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [v0.23.0] - 2026-07-01
 
 ### Added
 - **Server Stats sidebar** — live CPU % and RAM % sparkline charts (System vs Plex, two lines each) plus current LAN/WAN bandwidth, shown on the Sync tab. Polls every 30 s with a manual refresh button. On wide viewports (enough room to the right of the main column) the card pins as a fixed right sidebar (490 px); otherwise it sits inline. Rolling 20-point history buffer with pure-canvas sparklines — no external chart library.
