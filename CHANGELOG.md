@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Server Stats sidebar** — live CPU % and RAM % sparkline charts (System vs Plex, two lines each) plus current LAN/WAN bandwidth, shown on the Sync tab. Polls every 30 s with a manual refresh button. On wide viewports (enough room to the right of the main column) the card pins as a fixed right sidebar (490 px); otherwise it sits inline. Rolling 20-point history buffer with pure-canvas sparklines — no external chart library.
+- **Full Library Scan on Sync tab** — library section picker and Scan button are now on the Sync tab.
+- **Now Playing left sidebar** — on wide viewports with enough room to the left of the main column, the Now Playing mini-card and the tag legend both pin as a fixed left sidebar (490 px, aligned with the stats sidebar top). The legend sits first; Now Playing is positioned dynamically below it. Both collapse back to their normal inline positions on narrower screens.
+
+### Removed
+- **Now Playing tab** — the dedicated `/now-playing` route and `now_playing.html` template have been removed. All functionality has migrated to the Sync tab: the Now Playing mini-card (active streams) was already there; Server Stats and Full Library Scan have been added this release.
+
+### Fixed
+- **Now Playing sidebar overlap on desktop** — the wide-desktop sidebar layout switched on at a fixed `1440px` viewport-width breakpoint, which could overlap main-column cards when a browser sidebar, split-screen window, or devtools panel reduced available space. Layout is now controlled by JS that measures actual room beside the shell on each side independently.
+- **Episode tooltip viewport clip** — on history rows with very long file names, the `.ep-tooltip` hover card extended past the right edge of the viewport. It now anchors to the right side of the badge and extends leftward, with `max-width: min(640px, 90vw)`.
+- **Server Stats first-poll blank chart** — sparklines showed nothing for the first 30 s because a single data point triggered an early-return guard. A lone value is now padded to two identical points so a flat baseline renders immediately.
+
+### Changed
+- **Tag legend** — restyled from a narrow vertical list (160 px) to a wider horizontal pill row (490 px) that wraps at two rows. Labels are single-line; the episode-count badge example is shown inline alongside the other swatches.
+- Update astral-sh/ruff-action action to v4
+- Update actions/github-script action to v9
+
+---
+
 ## [v0.22.0] - 2026-06-30
 
 ### Added
