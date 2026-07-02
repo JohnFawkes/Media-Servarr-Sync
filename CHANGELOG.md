@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Now Playing mini player map** — the location map was hidden when the Now Playing card was in the left-sidebar layout on wide displays. It now renders at the bottom of each session card, spanning the full card width.
+
+---
+
 ## [v0.23.0] - 2026-07-01
 
 ### Added
