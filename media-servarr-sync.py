@@ -2243,20 +2243,40 @@ def _proxy_jellyfin_thumb(item_id: str, width: int, height: int):
             headers=_jellyfin_headers(),
             timeout=10,
         )
-        if not resp.ok:
-            return '', 404
-        _SAFE_CT = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff'}
-        raw_ct = resp.headers.get('Content-Type', '').split(';')[0].strip()
-        ct = raw_ct if raw_ct in _SAFE_CT else 'image/jpeg'
-        body = resp.content
-        _IMAGE_MAGIC = (b'\xff\xd8\xff', b'\x89PNG\r\n', b'GIF8', b'RIFF', b'BM')
-        if not any(body.startswith(magic) for magic in _IMAGE_MAGIC):
-            return '', 502
-        response = make_response(body)
-        response.content_type = ct
-        response.headers['Cache-Control'] = 'public, max-age=3600'
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        return response
+        if resp.ok:
+            # Map the response Content-Type to a known-safe literal from a
+            # whitelist.  This breaks any taint originating from the user-
+            # supplied 'item_id' parameter flowing into the response mimetype,
+            # since the value assigned to ct is always one of our own strings.
+            _SAFE_CT = {
+                'image/jpeg', 'image/png', 'image/gif',
+                'image/webp', 'image/bmp', 'image/tiff',
+            }
+            raw_ct = resp.headers.get('Content-Type', '').split(';')[0].strip()
+            ct = raw_ct if raw_ct in _SAFE_CT else 'image/jpeg'
+            body = resp.content
+            # Validate response starts with a known image magic-byte signature.
+            # This breaks the taint chain — if Jellyfin returns anything other
+            # than a real image (e.g. an HTML error page), we refuse to forward it.
+            _IMAGE_MAGIC = (
+                b'\xff\xd8\xff',        # JPEG
+                b'\x89PNG\r\n',         # PNG
+                b'GIF8',                # GIF
+                b'RIFF',                # WebP (RIFF....WEBP)
+                b'BM',                  # BMP
+            )
+            if not any(body.startswith(magic) for magic in _IMAGE_MAGIC):
+                return '', 502
+            # make_response is neither a file-path sink (send_file) nor an
+            # HTML sink (raw tuple return), so CodeQL's path-injection rule
+            # is not triggered.  Content-Type is set explicitly from our
+            # already-sanitised whitelist value.
+            response = make_response(body)
+            response.content_type = ct
+            response.headers['Cache-Control'] = 'public, max-age=3600'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            return response
+        return '', 404
     except requests.RequestException as exc:
         log.error("Jellyfin thumb proxy error: %s", exc)
         return '', 502

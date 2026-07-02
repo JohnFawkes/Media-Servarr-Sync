@@ -55,18 +55,27 @@ Plex and Jellyfin support are each independently toggled with `PLEX_ENABLED` / `
 ## **📷Screenshots**
 
 * **Login**
-![Login](screenshots/login.png)
 
-* **Dashboard (Sync History)**
-![Episode Count Hover & WebUI Dashboard](screenshots/episode_count.png)
+| Plex | Jellyfin |
+|---|---|
+| ![Login (Plex theme)](screenshots/login.png) | ![Login (Jellyfin theme)](screenshots/jellyfin_login.png) |
+
+* **Dashboard (Sync History, episode-count hover)**
+
+| Plex | Jellyfin |
+|---|---|
+| ![Episode Count Hover & WebUI Dashboard (Plex theme)](screenshots/episode_count.png) | ![Episode Count Hover & WebUI Dashboard (Jellyfin theme)](screenshots/jellyfin_episode_count.png) |
 
 * **Dashboard (Wide — with sidebars)**
-![Dashboard wide desktop with sidebars](screenshots/dashboard_wide.png)
 
-* **Dashboard (Jellyfin theme)**
+| Plex | Jellyfin |
+|---|---|
+| ![Dashboard wide desktop with sidebars (Plex theme)](screenshots/dashboard_wide.png) | ![Dashboard wide desktop with sidebars (Jellyfin theme)](screenshots/jellyfin_dashboard_wide.png) |
+
+* **Dashboard (Jellyfin theme, standard width)**
 ![Jellyfin-themed dashboard](screenshots/jellyfin_dashboard.png)
 
-* **Invite Management**
+* **Invite Management** *(Plex only — no Jellyfin equivalent; invites are built on Plex's friends/shared-libraries API)*
 ![Invites](screenshots/invites.png)
 
 ## Quick Start
