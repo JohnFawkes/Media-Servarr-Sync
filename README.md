@@ -106,6 +106,10 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `HISTORY_DAYS` | | `7` | Number of days to retain sync history. Older entries are auto-deleted. |
 | `SECTION_MAPPING` | ✔️ | `{}` | JSON map of path prefixes → Plex library section IDs |
 | `PATH_REPLACEMENTS` | | `{}` | JSON map: Sonarr/Radarr path prefix → path as seen inside this container |
+| `SONARR_URL` | no | — | Sonarr base URL, e.g. `http://sonarr:8989`. Enables quality profile and custom format lookups for Sonarr sync history entries |
+| `SONARR_API_KEY` | no | — | Sonarr API key (Settings → General → Security). Required alongside `SONARR_URL` |
+| `RADARR_URL` | no | — | Radarr base URL, e.g. `http://radarr:7878`. Enables quality profile and custom format lookups for Radarr sync history entries |
+| `RADARR_API_KEY` | no | — | Radarr API key (Settings → General → Security). Required alongside `RADARR_URL` |
 | `MANUAL_USER` | | `admin` | Username for the manual trigger UI |
 | `MANUAL_PASS` | | `changeme` | Password for the manual trigger UI |
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
