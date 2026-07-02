@@ -214,12 +214,6 @@ _geo_cache: dict[str, dict] = {}   # ip → {status, city, country, lat, lon, ..
 _geo_cache_lock = threading.Lock()
 
 
-def _is_private_ip(ip: str) -> bool:
-    try:
-        return ipaddress.ip_address(ip).is_private
-    except ValueError:
-        return True
-
 
 def _sanitize_floats(obj):
     """Recursively replace NaN/Infinity float values with None (valid JSON)."""
@@ -480,9 +474,6 @@ class SyncHistory:
                 cursor = conn.execute(query, params)
                 return cursor.fetchone()[0]
 
-    def as_list(self) -> list:
-        """For backward compatibility with old code."""
-        return self.get_recent(limit=50)
 
     def get_stats(self) -> dict:
         """Return aggregate statistics for the current retention window."""
@@ -632,6 +623,15 @@ class InviteDB:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("UPDATE invites SET status = 'revoked' WHERE token = ?", (token,))
                 conn.commit()
+
+    def get_grant(self, grant_id: int) -> Optional[dict]:
+        with self._lock:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM invite_grants WHERE id = ?", (grant_id,)
+                ).fetchone()
+                return dict(row) if row else None
 
     def revoke_grant(self, grant_id: int):
         with self._lock:
@@ -849,6 +849,13 @@ def sync_worker():
     log.info("Sync worker stopped")
 
 
+def _sleep_interruptible(secs: float) -> None:
+    """Sleep for up to `secs` seconds, waking early if _worker_alive is cleared."""
+    deadline = time.monotonic() + secs
+    while _worker_alive.is_set() and time.monotonic() < deadline:
+        time.sleep(1)
+
+
 def custom_format_refresh_scheduler() -> None:
     """Background thread: refresh the custom-format cache from Sonarr/Radarr every hour.
 
@@ -857,18 +864,12 @@ def custom_format_refresh_scheduler() -> None:
     second via the shared _worker_alive event.
     """
     log.info("Custom format scheduler started")
-    # Short initial delay so the arrs are likely up before we hit their API
-    deadline = time.monotonic() + 15
-    while _worker_alive.is_set() and time.monotonic() < deadline:
-        time.sleep(1)
+    _sleep_interruptible(15)
 
     while _worker_alive.is_set():
         for arr_type in ('sonarr', 'radarr'):
             _refresh_custom_formats(arr_type)
-        # Wait 1 hour, checking shutdown signal each second
-        deadline = time.monotonic() + 3600
-        while _worker_alive.is_set() and time.monotonic() < deadline:
-            time.sleep(1)
+        _sleep_interruptible(3600)
 
     log.info("Custom format scheduler stopped")
 
@@ -876,10 +877,7 @@ def custom_format_refresh_scheduler() -> None:
 def invite_expiry_scheduler() -> None:
     """Background thread: auto-revoke expired Plex access grants once per hour."""
     log.info("Invite expiry scheduler started")
-    # Initial delay before first check
-    deadline = time.monotonic() + 60
-    while _worker_alive.is_set() and time.monotonic() < deadline:
-        time.sleep(1)
+    _sleep_interruptible(60)
     while _worker_alive.is_set():
         try:
             expired = invite_db.get_expired_grants()
@@ -896,9 +894,7 @@ def invite_expiry_scheduler() -> None:
                                 grant.get('plex_username'), exc)
         except Exception as exc:
             log.error("[INVITE] Expiry scheduler error: %s", exc)
-        deadline = time.monotonic() + 3600
-        while _worker_alive.is_set() and time.monotonic() < deadline:
-            time.sleep(1)
+        _sleep_interruptible(3600)
     log.info("Invite expiry scheduler stopped")
 
 
@@ -939,6 +935,19 @@ def _find_plex_item(plex_instance, library, task: SyncTask):
 # ---------------------------------------------------------------------------
 # Webhook processing
 # ---------------------------------------------------------------------------
+
+# Skip events where no useful scan can be performed:
+#   Grab              — file is queued in the download client, not on disk yet
+#   EpisodeFileDelete / MovieFileDelete — the deleted file's path ends up in
+#                       `episodeFile`, which would record the OLD filename in
+#                       history; upgrades are covered by the subsequent Download event
+#   SeriesDelete / MovieDelete — entire series/movie removed; Plex scheduled scans
+#                       will eventually catch this, a targeted partial scan won't help
+_SKIP = {
+    'Grab',
+    'EpisodeFileDelete', 'EpisodeFileDeleted', 'SeriesDelete',   # Sonarr
+    'MovieFileDelete',   'MovieFileDeleted',   'MovieDelete',     # Radarr
+}
 
 def _merge_episode_counts(existing: str, incoming: str) -> str:
     """Accumulate episode info when duplicate webhooks arrive for the same folder.
@@ -1038,26 +1047,24 @@ def _parse_episode_field(ep_str: str) -> tuple:
     return ep_str, [], False
 
 
-def _extract_file_meta(file_obj: dict) -> tuple:
-    """Return (quality_name, custom_format_names) from an episodeFile / movieFile dict.
+def _extract_file_meta(file_obj: dict) -> str:
+    """Return quality_name from an episodeFile / movieFile dict.
 
     Sonarr/Radarr webhooks send episodeFile.quality as a plain string (e.g. "WEBDL-1080p").
     The API object form {quality: {name: "..."}} is also handled for completeness.
     Note: customFormats are at the top-level payload, not inside the file object — callers
     must extract those separately from the raw event dict.
     """
-    quality = ""
     q = file_obj.get('quality')
     if isinstance(q, str):
-        quality = q                          # webhook plain-string form
-    elif isinstance(q, dict):
+        return q
+    if isinstance(q, dict):
         inner = q.get('quality', {})
         if isinstance(inner, dict):
-            quality = inner.get('name', '') or ''
-        elif isinstance(inner, str):
-            quality = inner
-
-    return quality, []
+            return inner.get('name', '') or ''
+        if isinstance(inner, str):
+            return inner
+    return ""
 
 
 def _merge_qualities(existing: str, incoming: str) -> str:
@@ -1179,18 +1186,6 @@ def process_webhook(data: dict, instance_type: str):
                  label_up, raw_qual, raw_cf, sorted(data.keys()))
         return jsonify({"status": "test_success"}), 200
 
-    # Skip events where no useful scan can be performed:
-    #   Grab              — file is queued in the download client, not on disk yet
-    #   EpisodeFileDelete / MovieFileDelete — the deleted file's path ends up in
-    #                       `episodeFile`, which would record the OLD filename in
-    #                       history; upgrades are covered by the subsequent Download event
-    #   SeriesDelete / MovieDelete — entire series/movie removed; Plex scheduled scans
-    #                       will eventually catch this, a targeted partial scan won't help
-    _SKIP = {
-        'Grab',
-        'EpisodeFileDelete', 'EpisodeFileDeleted', 'SeriesDelete',   # Sonarr
-        'MovieFileDelete',   'MovieFileDeleted',   'MovieDelete',     # Radarr
-    }
     if event in _SKIP:
         log.info("[%s] Skipping event type '%s' (no scan needed)", instance_type.upper(), event)
         return jsonify({"status": "skipped", "reason": "event type not handled"}), 200
@@ -1208,7 +1203,7 @@ def process_webhook(data: dict, instance_type: str):
         raw_path = data['movie'].get('folderPath', '')
         mf = data.get('movieFile', {})
         if mf:
-            quality, _ = _extract_file_meta(mf)
+            quality = _extract_file_meta(mf)
             rp = mf.get('relativePath', '')
             if rp:
                 _episode_filename = rp.replace('\\', '/').split('/')[-1]
@@ -1243,7 +1238,7 @@ def process_webhook(data: dict, instance_type: str):
                 fn = rp.replace('\\', '/').split('/')[-1]
                 if fn not in _deleted_filenames:
                     episode_files = [fn]
-                    quality, _ = _extract_file_meta(ef)
+                    quality = _extract_file_meta(ef)
                     _episode_filename = fn   # single known file — used for rich episode object
                 else:
                     log.info("[%s] episodeFile '%s' matches a deletedFile — discarding stale episode info",
@@ -1255,7 +1250,7 @@ def process_webhook(data: dict, instance_type: str):
                 _quals = []
                 for _f in efs:
                     _fn = _f.get('relativePath', '').replace('\\', '/').split('/')[-1]
-                    _q, _ = _extract_file_meta(_f)
+                    _q = _extract_file_meta(_f)
                     if _fn:
                         episode_files.append(_fn)
                         _episode_files_meta.append({"f": _fn, "q": _q})
@@ -1269,7 +1264,7 @@ def process_webhook(data: dict, instance_type: str):
                 _quals = []
                 for _f in refs:
                     _fn = _f.get('relativePath', '').replace('\\', '/').split('/')[-1]
-                    _q, _ = _extract_file_meta(_f)
+                    _q = _extract_file_meta(_f)
                     if _fn:
                         episode_files.append(_fn)
                         _episode_files_meta.append({"f": _fn, "q": _q})
@@ -2290,8 +2285,7 @@ def revoke_invite(token):
 @app.route('/invites/revoke_grant/<int:grant_id>', methods=['POST'])
 @requires_auth
 def revoke_grant(grant_id):
-    all_grants = invite_db.get_grants()
-    matched = next((g for g in all_grants if g['id'] == grant_id), None)
+    matched = invite_db.get_grant(grant_id)
     if matched:
         try:
             plex_instance = get_plex()
