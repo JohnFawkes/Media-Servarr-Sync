@@ -263,11 +263,17 @@
   {% if plex_error %}
   <div class="alert-warn">Plex connection error: {{ plex_error }}. Library list may be unavailable.</div>
   {% endif %}
+  {% if jellyfin_error %}
+  <div class="alert-warn">Jellyfin connection error: {{ jellyfin_error }}. Library list may be unavailable.</div>
+  {% endif %}
+
+  {% set plex_libs = libraries | selectattr('provider', 'equalto', 'plex') | list %}
+  {% set jellyfin_libs = libraries | selectattr('provider', 'equalto', 'jellyfin') | list %}
 
   <!-- Create Invite -->
   <div class="card">
     <div class="card-label">Create Invite Link</div>
-    <form method="post" action="/invites/create"> {# nosemgrep: django-no-csrf-token #}
+    <form method="post" action="/invites/create" id="invite-form"> {# nosemgrep: django-no-csrf-token #}
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-grid">
 
@@ -277,14 +283,26 @@
           <input type="text" id="inv-label" name="label" placeholder="e.g. John Smith" autocomplete="off">
         </div>
 
-        <!-- Libraries -->
+        {% if both_enabled %}
         <div class="field field-full">
+          <label for="inv-provider">Server</label>
+          <select id="inv-provider" name="provider">
+            <option value="plex">Plex</option>
+            <option value="jellyfin">Jellyfin</option>
+          </select>
+        </div>
+        {% else %}
+        <input type="hidden" name="provider" value="{{ 'jellyfin' if jellyfin_enabled else 'plex' }}">
+        {% endif %}
+
+        <!-- Libraries: Plex -->
+        <div class="field field-full" data-provider-group="plex">
           <div class="field-group-label">Libraries <span style="font-weight:400;text-transform:none;letter-spacing:0">(leave all unchecked to grant access to everything)</span></div>
-          {% if libraries %}
+          {% if plex_libs %}
           <div class="lib-grid">
-            {% for lib in libraries %}
+            {% for lib in plex_libs %}
             <label class="lib-item">
-              <input type="checkbox" name="sections" value="{{ lib.id }}">
+              <input type="checkbox" name="plex_sections" value="{{ lib.id }}">
               {{ lib.title }}
               <span class="lib-type">{{ lib.type }}</span>
             </label>
@@ -297,8 +315,28 @@
           {% endif %}
         </div>
 
-        <!-- Permissions -->
-        <div class="field">
+        <!-- Libraries: Jellyfin -->
+        <div class="field field-full" data-provider-group="jellyfin" style="display:none;">
+          <div class="field-group-label">Libraries <span style="font-weight:400;text-transform:none;letter-spacing:0">(leave all unchecked to grant access to everything)</span></div>
+          {% if jellyfin_libs %}
+          <div class="lib-grid">
+            {% for lib in jellyfin_libs %}
+            <label class="lib-item">
+              <input type="checkbox" name="jellyfin_sections" value="{{ lib.id }}">
+              {{ lib.title }}
+              <span class="lib-type">{{ lib.type }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);">
+            Connect Jellyfin to show library list. All libraries will be shared.
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- Permissions: Plex -->
+        <div class="field" data-provider-group="plex">
           <div class="field-group-label">Permissions</div>
           <div class="checkbox-group">
             <label class="check-item">
@@ -316,6 +354,18 @@
               Add to Plex Home
             </label>
             <div class="check-hint">Grants managed account access (requires Plex Pass)</div>
+          </div>
+        </div>
+
+        <!-- Permissions: Jellyfin -->
+        <div class="field" data-provider-group="jellyfin" style="display:none;">
+          <div class="field-group-label">Permissions</div>
+          <div class="checkbox-group">
+            <label class="check-item">
+              <input type="checkbox" name="allow_sync">
+              Allow Downloads
+            </label>
+            <div class="check-hint">Let the user download media for offline viewing</div>
           </div>
         </div>
 
@@ -359,6 +409,9 @@
       <div class="invite-row">
         <div class="invite-top">
           <span class="invite-label">{{ inv.label or '(unlabeled)' }}</span>
+          {% if both_enabled %}
+          <span class="badge {{ 'badge-lib' if inv.provider == 'jellyfin' else 'badge-yes' }}">{{ 'Jellyfin' if inv.provider == 'jellyfin' else 'Plex' }}</span>
+          {% endif %}
           {% if inv.is_active %}
             <span class="invite-status status-active">Active</span>
           {% elif inv.status == 'revoked' %}
@@ -398,12 +451,14 @@
           <span>
             Downloads: <span class="badge {{ 'badge-yes' if inv.allow_sync else 'badge-no' }}">{{ 'Yes' if inv.allow_sync else 'No' }}</span>
           </span>
+          {% if inv.provider != 'jellyfin' %}
           <span>
             Live TV: <span class="badge {{ 'badge-yes' if inv.allow_channels else 'badge-no' }}">{{ 'Yes' if inv.allow_channels else 'No' }}</span>
           </span>
           <span>
             Home: <span class="badge {{ 'badge-yes' if inv.home_user else 'badge-no' }}">{{ 'Yes' if inv.home_user else 'No' }}</span>
           </span>
+          {% endif %}
         </div>
 
         {% if inv.section_names %}
@@ -435,7 +490,7 @@
               {% endif %}
               <div class="grant-actions">
                 {% if not g.revoked %}
-                <form method="post" action="/invites/revoke_grant/{{ g.id }}" style="display:inline;" data-confirm="Revoke Plex access for {{ g.plex_username }}?" onsubmit="return confirm(this.dataset.confirm)"> {# nosemgrep: django-no-csrf-token #}
+                <form method="post" action="/invites/revoke_grant/{{ g.id }}" style="display:inline;" data-confirm="Revoke {{ 'Jellyfin' if g.provider == 'jellyfin' else 'Plex' }} access for {{ g.plex_username }}?" onsubmit="return confirm(this.dataset.confirm)"> {# nosemgrep: django-no-csrf-token #}
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button type="submit" class="btn-revoke">Revoke</button>
                 </form>
@@ -525,6 +580,19 @@ function toggleGrants(btn) {
   var open = list.classList.toggle('open');
   btn.textContent = (open ? '▾ ' : '▸ ') + btn.textContent.slice(2);
 }
+
+/* Toggle Plex/Jellyfin library+permission field groups when the provider select changes */
+(function() {
+  var sel = document.getElementById('inv-provider');
+  if (!sel) return;
+  function applyProvider() {
+    document.querySelectorAll('[data-provider-group]').forEach(function(el) {
+      el.style.display = (el.getAttribute('data-provider-group') === sel.value) ? '' : 'none';
+    });
+  }
+  sel.addEventListener('change', applyProvider);
+  applyProvider();
+})();
 
 var btt = document.getElementById('back-to-top');
 if (btt) { window.onscroll = function() { btt.classList.toggle('visible', window.scrollY > 300); }; }

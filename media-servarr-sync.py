@@ -603,11 +603,23 @@ class InviteDB:
                     FOREIGN KEY (invite_id) REFERENCES invites(id)
                 )
             """)
+            # Migrate existing databases that lack newer columns.
+            # provider: which media server the invite/grant targets ('plex' or 'jellyfin').
+            # provider_user_id: Jellyfin's user Id (needed to delete the account on revoke);
+            #   unused/NULL for Plex grants, which are revoked by username via removeFriend().
+            existing_invites = {row[1] for row in conn.execute("PRAGMA table_info(invites)")}
+            if 'provider' not in existing_invites:
+                conn.execute("ALTER TABLE invites ADD COLUMN provider TEXT DEFAULT 'plex'")
+            existing_grants = {row[1] for row in conn.execute("PRAGMA table_info(invite_grants)")}
+            if 'provider' not in existing_grants:
+                conn.execute("ALTER TABLE invite_grants ADD COLUMN provider TEXT DEFAULT 'plex'")
+            if 'provider_user_id' not in existing_grants:
+                conn.execute("ALTER TABLE invite_grants ADD COLUMN provider_user_id TEXT DEFAULT ''")
             conn.commit()
 
     def create(self, label: str, section_ids: list, allow_sync: bool,
                allow_channels: bool, home_user: bool, duration_days: int,
-               max_uses: int, link_expires_days: int) -> str:
+               max_uses: int, link_expires_days: int, provider: str = 'plex') -> str:
         token = _secrets.token_urlsafe(16)
         link_exp = int(time.time() + link_expires_days * 86400) if link_expires_days else None
         with self._lock:
@@ -615,11 +627,11 @@ class InviteDB:
                 conn.execute("""
                     INSERT INTO invites
                         (token, label, section_ids, allow_sync, allow_channels, home_user,
-                         duration_days, max_uses, created_at, link_expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         duration_days, max_uses, created_at, link_expires_at, provider)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (token, label, json.dumps(section_ids), int(allow_sync),
                       int(allow_channels), int(home_user), duration_days,
-                      max_uses, int(time.time()), link_exp))
+                      max_uses, int(time.time()), link_exp, provider))
                 conn.commit()
         return token
 
@@ -639,15 +651,16 @@ class InviteDB:
                 ).fetchall()
                 return [dict(r) for r in rows]
 
-    def record_acceptance(self, invite_id: int, plex_username: str, duration_days: int):
+    def record_acceptance(self, invite_id: int, username: str, duration_days: int,
+                          provider: str = 'plex', provider_user_id: str = ''):
         access_exp = int(time.time() + duration_days * 86400) if duration_days else None
         with self._lock:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("""
                     INSERT INTO invite_grants
-                        (invite_id, plex_username, accepted_at, access_expires_at)
-                    VALUES (?, ?, ?, ?)
-                """, (invite_id, plex_username, int(time.time()), access_exp))
+                        (invite_id, plex_username, accepted_at, access_expires_at, provider, provider_user_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (invite_id, username, int(time.time()), access_exp, provider, provider_user_id))
                 conn.execute("UPDATE invites SET uses = uses + 1 WHERE id = ?", (invite_id,))
                 conn.commit()
 
@@ -897,6 +910,54 @@ def jellyfin_sessions() -> list:
 
 
 # ---------------------------------------------------------------------------
+# Jellyfin user management (invites)
+# ---------------------------------------------------------------------------
+#
+# Jellyfin has no "friend"/account-linking concept like Plex — inviting
+# someone means creating an actual local Jellyfin user account on their
+# behalf (the same approach used by third-party invite tools such as
+# Wizarr), then restricting that account's library access via its Policy.
+
+def jellyfin_create_user(username: str, password: str) -> dict:
+    """Create a new local Jellyfin user. Returns the created user dict (includes 'Id')."""
+    r = requests.post(f"{JELLYFIN_URL}/Users/New",
+                       headers=_jellyfin_headers(),
+                       json={"Name": username, "Password": password},
+                       timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def jellyfin_set_user_library_access(user_id: str, library_ids: list, allow_downloads: bool = False) -> None:
+    """Restrict a Jellyfin user's library access. An empty library_ids list means
+    'all libraries' (EnableAllFolders=True), matching the Plex invite UI's
+    'leave unchecked to grant access to everything' behaviour.
+
+    There is no standalone GET for a user's Policy (405) — the current policy
+    is read from the full user object and posted back with our changes merged in.
+    """
+    r = requests.get(f"{JELLYFIN_URL}/Users/{user_id}", headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+    policy = r.json().get('Policy', {})
+
+    policy['EnableAllFolders'] = not bool(library_ids)
+    policy['EnabledFolders'] = list(library_ids) if library_ids else []
+    policy['EnableContentDownloading'] = allow_downloads
+    policy['IsAdministrator'] = False
+
+    r = requests.post(f"{JELLYFIN_URL}/Users/{user_id}/Policy",
+                       headers=_jellyfin_headers(), json=policy, timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+
+
+def jellyfin_delete_user(user_id: str) -> None:
+    """Delete a local Jellyfin user account (used to revoke invite access)."""
+    r = requests.delete(f"{JELLYFIN_URL}/Users/{user_id}", headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+    if r.status_code not in (200, 204, 404):
+        r.raise_for_status()
+
+
+# ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
@@ -1089,7 +1150,7 @@ def custom_format_refresh_scheduler() -> None:
 
 
 def invite_expiry_scheduler() -> None:
-    """Background thread: auto-revoke expired Plex access grants once per hour."""
+    """Background thread: auto-revoke expired Plex/Jellyfin access grants once per hour."""
     log.info("Invite expiry scheduler started")
     # Initial delay before first check
     deadline = time.monotonic() + 60
@@ -1099,16 +1160,22 @@ def invite_expiry_scheduler() -> None:
         try:
             expired = invite_db.get_expired_grants()
             for grant in expired:
+                provider = grant.get('provider') or 'plex'
                 try:
-                    plex_instance = get_plex()
-                    if plex_instance:
-                        account = plex_instance.myPlexAccount()
-                        account.removeFriend(grant['plex_username'])
-                        log.info("[INVITE] Auto-revoked expired access for '%s'", grant['plex_username'])
+                    if provider == 'jellyfin':
+                        if grant.get('provider_user_id'):
+                            jellyfin_delete_user(grant['provider_user_id'])
+                            log.info("[INVITE] Auto-revoked expired Jellyfin access for '%s'", grant['plex_username'])
+                    else:
+                        plex_instance = get_plex()
+                        if plex_instance:
+                            account = plex_instance.myPlexAccount()
+                            account.removeFriend(grant['plex_username'])
+                            log.info("[INVITE] Auto-revoked expired Plex access for '%s'", grant['plex_username'])
                     invite_db.revoke_grant(grant['id'])
                 except Exception as exc:
-                    log.warning("[INVITE] Error auto-revoking '%s': %s",
-                                grant.get('plex_username'), exc)
+                    log.warning("[INVITE] Error auto-revoking %s access for '%s': %s",
+                                provider, grant.get('plex_username'), exc)
         except Exception as exc:
             log.error("[INVITE] Expiry scheduler error: %s", exc)
         deadline = time.monotonic() + 3600
@@ -2603,30 +2670,62 @@ def _plex_section_names(plex_instance, section_ids: list) -> list[str]:
         return []
 
 
+def _jellyfin_section_names(section_ids: list) -> list[str]:
+    try:
+        all_libs = {lib['id']: lib['title'] for lib in jellyfin_list_libraries()}
+        if section_ids:
+            return [all_libs.get(str(sid), str(sid)) for sid in section_ids]
+        return list(all_libs.values())
+    except Exception:
+        return []
+
+
+def _section_names(provider: str, plex_instance, section_ids: list) -> list[str]:
+    if provider == 'jellyfin':
+        return _jellyfin_section_names(section_ids)
+    return _plex_section_names(plex_instance, section_ids) if plex_instance else []
+
+
 @app.route('/invites', methods=['GET'])
 @requires_auth
 def invites_page():
-    if not PLEX_ENABLED:
-        # Invite management uses the Plex friends/shared-libraries API and has no
-        # Jellyfin equivalent implemented yet — not reachable when Plex is disabled.
+    if not PLEX_ENABLED and not JELLYFIN_ENABLED:
         return redirect(url_for('manual_webhook'))
     if session.get('demo'):
+        demo_libs = []
+        if PLEX_ENABLED:
+            demo_libs += [{"id": "1", "title": "TV Shows", "type": "show", "provider": "plex"},
+                          {"id": "2", "title": "Movies", "type": "movie", "provider": "plex"}]
+        if JELLYFIN_ENABLED:
+            demo_libs += [{"id": "jf1", "title": "TV Shows", "type": "tvshows", "provider": "jellyfin"},
+                          {"id": "jf2", "title": "Movies", "type": "movies", "provider": "jellyfin"}]
         return render_template('invites.html', invites=_DEMO_INVITES,
-                               libraries=[{"id": "1", "title": "TV Shows", "type": "show"},
-                                          {"id": "2", "title": "Movies", "type": "movie"}],
+                               libraries=demo_libs,
                                plex_error=None, demo=True)
 
-    plex_instance = get_plex()
+    plex_instance = get_plex() if PLEX_ENABLED else None
     libraries  = []
     plex_error = None
-    if plex_instance:
+    if PLEX_ENABLED:
+        if plex_instance:
+            try:
+                libraries += [
+                    {'id': str(s.key), 'title': s.title, 'type': s.type, 'provider': 'plex'}
+                    for s in plex_instance.library.sections()
+                ]
+            except Exception as exc:
+                plex_error = str(exc)
+        else:
+            plex_error = 'Could not connect to Plex'
+    jellyfin_error = None
+    if JELLYFIN_ENABLED:
         try:
-            libraries = [
-                {'id': str(s.key), 'title': s.title, 'type': s.type}
-                for s in plex_instance.library.sections()
+            libraries += [
+                {'id': lib['id'], 'title': lib['title'], 'type': lib['type'], 'provider': 'jellyfin'}
+                for lib in jellyfin_list_libraries()
             ]
         except Exception as exc:
-            plex_error = str(exc)
+            jellyfin_error = str(exc)
 
     invites    = invite_db.list_all()
     all_grants = invite_db.get_grants()
@@ -2635,28 +2734,35 @@ def invites_page():
         grants_by_invite.setdefault(g['invite_id'], []).append(g)
 
     now = int(time.time())
-    lib_map = {lib['id']: lib['title'] for lib in libraries}
+    lib_map = {(lib['provider'], str(lib['id'])): lib['title'] for lib in libraries}
     for inv in invites:
         inv['grants'] = grants_by_invite.get(inv['id'], [])
+        provider = inv.get('provider') or 'plex'
         try:
             inv['section_ids'] = json.loads(inv.get('section_ids', '[]') or '[]')
         except Exception:
             inv['section_ids'] = []
-        inv['section_names'] = [lib_map.get(str(sid), str(sid)) for sid in inv['section_ids']]
+        inv['section_names'] = [lib_map.get((provider, str(sid)), str(sid)) for sid in inv['section_ids']]
         le = inv.get('link_expires_at')
         inv['link_expired']  = bool(le and now > le)
         inv['max_reached']   = inv.get('max_uses', 0) > 0 and inv.get('uses', 0) >= inv.get('max_uses', 0)
         inv['is_active']     = inv.get('status') == 'active' and not inv['link_expired'] and not inv['max_reached']
 
     return render_template('invites.html', invites=invites, libraries=libraries,
-                           plex_error=plex_error, demo=session.get('demo', False))
+                           plex_error=plex_error, jellyfin_error=jellyfin_error,
+                           demo=session.get('demo', False))
 
 
 @app.route('/invites/create', methods=['POST'])
 @requires_auth
 def create_invite():
     label             = request.form.get('label', '').strip()
-    section_ids       = request.form.getlist('sections')
+    provider          = request.form.get('provider', 'plex').strip()
+    if provider not in ('plex', 'jellyfin'):
+        provider = 'plex'
+    # Section checkboxes are namespaced per-provider ("plex_sections" / "jellyfin_sections")
+    # so stray selections from the hidden provider's library grid are never submitted.
+    section_ids       = request.form.getlist(f'{provider}_sections')
     allow_sync        = 'allow_sync' in request.form
     allow_channels    = 'allow_channels' in request.form
     home_user         = 'home_user' in request.form
@@ -2664,7 +2770,7 @@ def create_invite():
     max_uses          = int(request.form.get('max_uses', '1') or '1')
     link_expires_days = int(request.form.get('link_expires_days', '7') or '7')
     invite_db.create(label, section_ids, allow_sync, allow_channels, home_user,
-                     duration_days, max_uses, link_expires_days)
+                     duration_days, max_uses, link_expires_days, provider=provider)
     return redirect(url_for('invites_page'))
 
 
@@ -2681,14 +2787,21 @@ def revoke_grant(grant_id):
     all_grants = invite_db.get_grants()
     matched = next((g for g in all_grants if g['id'] == grant_id), None)
     if matched:
+        provider = matched.get('provider') or 'plex'
         try:
-            plex_instance = get_plex()
-            if plex_instance:
-                account = plex_instance.myPlexAccount()
-                account.removeFriend(matched['plex_username'])
-                log.info("[INVITE] Manually revoked Plex access for '%s'", matched['plex_username'])
+            if provider == 'jellyfin':
+                if matched.get('provider_user_id'):
+                    jellyfin_delete_user(matched['provider_user_id'])
+                    log.info("[INVITE] Manually revoked Jellyfin access for '%s'", matched['plex_username'])
+            else:
+                plex_instance = get_plex()
+                if plex_instance:
+                    account = plex_instance.myPlexAccount()
+                    account.removeFriend(matched['plex_username'])
+                    log.info("[INVITE] Manually revoked Plex access for '%s'", matched['plex_username'])
         except Exception as exc:
-            log.warning("[INVITE] Error revoking Plex friend '%s': %s", matched.get('plex_username'), exc)
+            log.warning("[INVITE] Error revoking %s access for '%s': %s",
+                        provider, matched.get('plex_username'), exc)
         invite_db.revoke_grant(grant_id)
     return redirect(url_for('invites_page'))
 
@@ -2697,33 +2810,42 @@ def revoke_grant(grant_id):
 # Public invite / onboarding routes
 # ---------------------------------------------------------------------------
 
+def _onboard_render(invite: dict, token: str, step: str, error: Optional[str] = None,
+                    section_names: Optional[list] = None, username: str = ''):
+    """Render invite_onboard.html with all provider-aware context filled in."""
+    provider = (invite or {}).get('provider') or 'plex'
+    if provider == 'jellyfin':
+        server_name = ''
+        jf_info = get_jellyfin_info()
+        if jf_info:
+            server_name = jf_info.get('ServerName', '')
+        server_url = JELLYFIN_URL
+    else:
+        plex_instance = get_plex()
+        server_name = getattr(plex_instance, 'friendlyName', '') if plex_instance else ''
+        server_url = PLEX_URL
+    return render_template(
+        'invite_onboard.html',
+        invite=invite, section_names=section_names or [], step=step,
+        token=token, error=error, provider=provider,
+        server_name=server_name, server_url=server_url, username=username,
+        onboard_wiki_url=ONBOARD_WIKI_URL,
+        onboard_request_url=ONBOARD_REQUEST_URL,
+    )
+
+
 @app.route('/invite/<token>', methods=['GET'])
 def invite_onboard(token):
     invite = invite_db.get(token)
     err = _invite_validity(invite)
     if err:
-        return render_template('invite_onboard.html', error=err, step='error',
-                               invite=invite, section_names=[], token=token,
-                               plex_server_name='', plex_username='',
-                               plex_url=PLEX_URL,
-                               onboard_wiki_url=ONBOARD_WIKI_URL,
-                               onboard_request_url=ONBOARD_REQUEST_URL)
+        return _onboard_render(invite, token, 'error', error=err)
 
-    plex_instance   = get_plex()
-    plex_server_name = getattr(plex_instance, 'friendlyName', '') if plex_instance else ''
-    section_ids     = json.loads(invite.get('section_ids', '[]') or '[]')
-    section_names   = _plex_section_names(plex_instance, section_ids) if plex_instance else []
-
+    section_ids   = json.loads(invite.get('section_ids', '[]') or '[]')
+    section_names = _section_names(invite.get('provider') or 'plex',
+                                   get_plex() if PLEX_ENABLED else None, section_ids)
     step = request.args.get('step', 'welcome')
-    return render_template(
-        'invite_onboard.html',
-        invite=invite, section_names=section_names, step=step,
-        token=token, error=None,
-        plex_server_name=plex_server_name, plex_username='',
-        plex_url=PLEX_URL,
-        onboard_wiki_url=ONBOARD_WIKI_URL,
-        onboard_request_url=ONBOARD_REQUEST_URL,
-    )
+    return _onboard_render(invite, token, step, section_names=section_names)
 
 
 @app.route('/invite/<token>/accept', methods=['POST'])
@@ -2731,34 +2853,25 @@ def accept_invite(token):
     invite = invite_db.get(token)
     err = _invite_validity(invite)
     if err:
-        return render_template('invite_onboard.html', error=err, step='error',
-                               invite=invite, section_names=[], token=token,
-                               plex_server_name='', plex_username='',
-                               plex_url=PLEX_URL,
-                               onboard_wiki_url=ONBOARD_WIKI_URL,
-                               onboard_request_url=ONBOARD_REQUEST_URL)
+        return _onboard_render(invite, token, 'error', error=err)
 
-    plex_username    = request.form.get('plex_username', '').strip()
-    plex_instance    = get_plex()
-    plex_server_name = getattr(plex_instance, 'friendlyName', '') if plex_instance else ''
+    provider = invite.get('provider') or 'plex'
+
+    if provider == 'jellyfin':
+        return _accept_jellyfin_invite(invite, token)
+    return _accept_plex_invite(invite, token)
+
+
+def _accept_plex_invite(invite: dict, token: str):
+    plex_username = request.form.get('username', '').strip()
+    plex_instance  = get_plex()
 
     if not plex_username:
-        return render_template('invite_onboard.html', invite=invite, step='accept',
-                               error='Please enter your Plex username or email.',
-                               token=token, section_names=[], plex_server_name=plex_server_name,
-                               plex_username='',
-                               plex_url=PLEX_URL,
-                               onboard_wiki_url=ONBOARD_WIKI_URL,
-                               onboard_request_url=ONBOARD_REQUEST_URL)
-
+        return _onboard_render(invite, token, 'accept',
+                               error='Please enter your Plex username or email.')
     if not plex_instance:
-        return render_template('invite_onboard.html', invite=invite, step='accept',
-                               error='Server error: cannot connect to Plex. Please try again later.',
-                               token=token, section_names=[], plex_server_name=plex_server_name,
-                               plex_username=plex_username,
-                               plex_url=PLEX_URL,
-                               onboard_wiki_url=ONBOARD_WIKI_URL,
-                               onboard_request_url=ONBOARD_REQUEST_URL)
+        return _onboard_render(invite, token, 'accept', username=plex_username,
+                               error='Server error: cannot connect to Plex. Please try again later.')
     try:
         account       = plex_instance.myPlexAccount()
         section_ids   = json.loads(invite.get('section_ids', '[]') or '[]')
@@ -2775,36 +2888,56 @@ def accept_invite(token):
             allowCameraUpload=False,
             allowChannels=bool(invite.get('allow_channels')),
         )
-        invite_db.record_acceptance(invite['id'], plex_username, invite.get('duration_days', 0))
-        log.info("[INVITE] '%s' accepted invite '%s'", plex_username, invite.get('label', token))
-
-        return render_template(
-            'invite_onboard.html',
-            step='done', invite=invite, section_names=section_names,
-            token=token, error=None,
-            plex_server_name=plex_server_name, plex_username=plex_username,
-            plex_url=PLEX_URL,
-            onboard_wiki_url=ONBOARD_WIKI_URL,
-            onboard_request_url=ONBOARD_REQUEST_URL,
-        )
+        invite_db.record_acceptance(invite['id'], plex_username, invite.get('duration_days', 0),
+                                    provider='plex')
+        log.info("[INVITE] '%s' accepted Plex invite '%s'", plex_username, invite.get('label', token))
+        return _onboard_render(invite, token, 'done', section_names=section_names, username=plex_username)
     except Exception as exc:
         err = str(exc)
-        log.error("[INVITE] Acceptance error for '%s': %s", plex_username, exc)
+        log.error("[INVITE] Plex acceptance error for '%s': %s", plex_username, exc)
         if 'already' in err.lower() or 'exist' in err.lower():
             user_err = f"'{plex_username}' may already have access, or has already been invited."
         elif 'not found' in err.lower() or 'invalid' in err.lower() or '404' in err:
             user_err = f"Plex account '{plex_username}' not found. Please check your username or email."
         else:
             user_err = "Could not process the invite. Please try again or contact the server owner."
-        return render_template(
-            'invite_onboard.html',
-            invite=invite, step='accept', error=user_err,
-            token=token, section_names=[], plex_server_name=plex_server_name,
-            plex_username=plex_username,
-            plex_url=PLEX_URL,
-            onboard_wiki_url=ONBOARD_WIKI_URL,
-            onboard_request_url=ONBOARD_REQUEST_URL,
-        )
+        return _onboard_render(invite, token, 'accept', error=user_err, username=plex_username)
+
+
+def _accept_jellyfin_invite(invite: dict, token: str):
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '')
+
+    if not username or not password:
+        return _onboard_render(invite, token, 'accept', username=username,
+                               error='Please choose a username and password.')
+    if len(password) < 6:
+        return _onboard_render(invite, token, 'accept', username=username,
+                               error='Password must be at least 6 characters.')
+    try:
+        section_ids   = json.loads(invite.get('section_ids', '[]') or '[]')
+        section_names = _jellyfin_section_names(section_ids)
+
+        user = jellyfin_create_user(username, password)
+        user_id = user.get('Id', '')
+        jellyfin_set_user_library_access(user_id, section_ids, allow_downloads=bool(invite.get('allow_sync')))
+
+        invite_db.record_acceptance(invite['id'], username, invite.get('duration_days', 0),
+                                    provider='jellyfin', provider_user_id=user_id)
+        log.info("[INVITE] '%s' accepted Jellyfin invite '%s'", username, invite.get('label', token))
+        return _onboard_render(invite, token, 'done', section_names=section_names, username=username)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        log.error("[INVITE] Jellyfin acceptance error for '%s': %s", username, exc)
+        if status == 400:
+            user_err = f"'{username}' is already taken. Please choose a different username."
+        else:
+            user_err = "Could not process the invite. Please try again or contact the server owner."
+        return _onboard_render(invite, token, 'accept', error=user_err, username=username)
+    except Exception as exc:
+        log.error("[INVITE] Jellyfin acceptance error for '%s': %s", username, exc)
+        return _onboard_render(invite, token, 'accept', username=username,
+                               error='Could not process the invite. Please try again or contact the server owner.')
 
 
 # ---------------------------------------------------------------------------

@@ -75,7 +75,7 @@ templates/
 | `/webhook/sonarr` | POST | none (CSRF exempt) | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | none (CSRF exempt) | Radarr webhook receiver |
 | `/` | GET/POST | session | Sync tab — manual scan UI, history, Full Library Scan, Now Playing (Plex and/or Jellyfin), and (Plex only) Server Stats |
-| `/invites` | GET | session | Invite management tab *(Plex only; redirects to `/` when `PLEX_ENABLED=false`)* |
+| `/invites` | GET | session | Invite management tab (Plex and/or Jellyfin; redirects to `/` when neither is enabled) |
 | `/invites/create` | POST | session | Create a new invite link |
 | `/invites/revoke/<token>` | POST | session | Revoke an invite link |
 | `/invites/revoke_grant/<id>` | POST | session | Revoke an accepted grant |

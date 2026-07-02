@@ -13,9 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Multi-provider Full Library Scan** — the Sync tab's library dropdown now lists Plex sections and/or Jellyfin libraries (via `/api/libraries`), labelled by provider when both are enabled; `/api/scan/library` routes the scan request to the matching server.
 - **Jellyfin-aware health check** — `/health` now reports `plex_enabled`/`plex_connected` and `jellyfin_enabled`/`jellyfin_connected` independently; overall `status` is `"ok"` only when every enabled server is reachable.
 - **Jellyfin Now Playing** — active Jellyfin sessions (via `/Sessions`) now appear in the Now Playing card alongside Plex sessions, normalized to the same layout: artwork (proxied through Jellyfin's Images API), progress bar, stream quality (Direct Play / Direct Stream / Transcode), and an "Open in Jellyfin" deep link. When both servers are enabled, sessions from each appear together in one list.
+- **Jellyfin invites** — the Invite Management tab now supports Jellyfin alongside Plex. Since Jellyfin has no Plex-style "friend" linking, accepting a Jellyfin invite creates a brand-new local Jellyfin user account (username + password chosen by the invitee) with library access restricted via the user's Policy (`EnabledFolders`) — the same approach third-party tools like Wizarr use. A `provider` selector appears on the invite-creation form when both servers are enabled; revoking a Jellyfin grant deletes the account, and expired grants are auto-revoked the same way as Plex.
 
 ### Changed
-- **Server Stats and Invites are Plex-only** — these features have no Jellyfin equivalent implemented yet, so their cards/nav links/routes are hidden and skipped entirely when `PLEX_ENABLED=false`. Now Playing, by contrast, supports both servers.
+- **Server Stats remains Plex-only** — no Jellyfin resource-usage API equivalent exists yet, so the card is hidden when `PLEX_ENABLED=false`. Now Playing and Invite Management, by contrast, now support both servers.
 
 ## [v0.23.0] - 2026-07-01
 

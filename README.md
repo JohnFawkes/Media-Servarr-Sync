@@ -46,7 +46,7 @@ Plex and Jellyfin support are each independently toggled with `PLEX_ENABLED` / `
 - **Now Playing** — active streams from Plex and/or Jellyfin (whichever are enabled) shown directly on the Sync tab: player info, artwork, progress bar, stream quality (including **HW Transcode** detection), and an interactive map of the player's approximate location. Sessions from both servers appear in the same list when both are enabled. On wide viewports the card pins as a fixed left sidebar below the tag legend
 - **Server stats** *(Plex only)* — live CPU % and RAM % sparkline charts (System vs Plex process) and current LAN/WAN bandwidth, shown directly on the Sync tab. Powered by the Plex `/statistics/resources` and `/statistics/bandwidth` APIs; polled every 30 s with no external CDN. On wide viewports the card pins as a fixed right sidebar. No Jellyfin equivalent yet
 - **Full library scan** — trigger a full scan of any Plex section or Jellyfin library directly from the Sync tab via a library selector dropdown; when both servers are enabled each entry is labelled by provider
-- **Invite management** *(Plex only)* — create time-limited invite links for new Plex users; configure allowed libraries, permissions, max uses, and expiry; track and revoke accepted invites
+- **Invite management** — create time-limited invite links for new Plex or Jellyfin users; configure allowed libraries, permissions, max uses, and expiry; track and revoke accepted invites. Plex invites link an existing Plex account (via Plex's friends API); Jellyfin invites create a brand-new local Jellyfin account with a username/password the invitee chooses, restricted to the selected libraries — the same approach used by dedicated tools like [Wizarr](https://github.com/Wizarrrr/wizarr)
 - **Single-page navigation** — tab switching uses PJAX (in-place content swap) with no full page reload
 - **Self-hosted fonts** — IBM Plex Mono and IBM Plex Sans are served from the container; no external CDN requests, works behind strict reverse proxies
 
@@ -75,7 +75,7 @@ Plex and Jellyfin support are each independently toggled with `PLEX_ENABLED` / `
 * **Dashboard (Jellyfin theme, standard width)**
 ![Jellyfin-themed dashboard](screenshots/jellyfin_dashboard.png)
 
-* **Invite Management** *(Plex only — no Jellyfin equivalent; invites are built on Plex's friends/shared-libraries API)*
+* **Invite Management** — Plex invites link an existing Plex account; Jellyfin invites create a new local account for the invitee
 ![Invites](screenshots/invites.png)
 
 ## Quick Start
@@ -228,7 +228,7 @@ When both Plex and Jellyfin are enabled, a path is scanned on every server whose
 | `/webhook/sonarr` | POST | None | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | None | Radarr webhook receiver |
 | `/` | GET / POST | Session | Sync tab — manual trigger, history, Full Library Scan, Now Playing (Plex and/or Jellyfin), and (Plex only) Server Stats |
-| `/invites` | GET | Session | Invite management tab *(Plex only)* |
+| `/invites` | GET | Session | Invite management tab (Plex and/or Jellyfin) |
 | `/invite/<token>` | GET | None | Public invite landing page |
 | `/health` | GET | None | JSON health check |
 | `/api/stats` | GET | None | Aggregate sync stats for dashboards |
