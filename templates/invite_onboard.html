@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% if step == 'done' %}Welcome!{% elif step == 'error' %}Invalid Invite{% else %}You're Invited!{% endif %} · Plex</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
+<title>{% if step == 'done' %}Welcome!{% elif step == 'error' %}Invalid Invite{% else %}You're Invited!{% endif %} · {{ 'Jellyfin' if provider == 'jellyfin' else 'Plex' }}</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23{{ '{:06x}'.format(0xAA5CC3 if provider == 'jellyfin' else 0xE5A00D) }}' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23{{ '{:06x}'.format(0xAA5CC3 if provider == 'jellyfin' else 0xE5A00D) }}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
 
-<meta name="theme-color" content="#e5a00d">
+<meta name="theme-color" content="{{ '#AA5CC3' if provider == 'jellyfin' else '#e5a00d' }}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -17,10 +17,10 @@
 
   :root {
     --bg: #0d0d0f; --surface: #161618; --border: #2a2a2e;
-    --accent: #e5a00d; --accent-dim: rgba(229,160,13,0.12);
+    --accent: {{ '#AA5CC3' if provider == 'jellyfin' else '#e5a00d' }}; --accent-dim: {{ 'rgba(170,92,195,0.12)' if provider == 'jellyfin' else 'rgba(229,160,13,0.12)' }};
     --text: #e8e8e8; --muted: #666;
     --success: #4ade80; --warn: #fb923c; --error: #f87171; --info: #60a5fa;
-    --plex: #e5a00d;
+    --plex: {{ '#AA5CC3' if provider == 'jellyfin' else '#e5a00d' }};
     --radius: 6px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -37,7 +37,7 @@
     display: flex; align-items: center; gap: 10px;
     margin-bottom: 36px;
   }
-  .logo-icon { filter: drop-shadow(0 0 8px rgba(229,160,13,0.6)); }
+  .logo-icon { filter: drop-shadow(0 0 8px {{ 'rgba(170,92,195,0.6)' if provider == 'jellyfin' else 'rgba(229,160,13,0.6)' }}); }
   .logo-name {
     font-family: 'IBM Plex Mono', monospace; font-size: 15px;
     font-weight: 600; letter-spacing: 0.04em; color: var(--accent);
@@ -109,7 +109,7 @@
   }
   .btn:hover { opacity: 0.85; }
   .btn-primary { background: var(--accent); color: #0d0d0f; }
-  .btn-plex    { background: #e5a00d; color: #0d0d0f; }
+  .btn-plex    { background: var(--plex); color: #0d0d0f; }
   .btn-outline {
     background: transparent; color: var(--muted);
     border: 1px solid var(--border);
@@ -178,8 +178,8 @@
 
   .welcome-banner {
     width: 100%; max-width: 480px;
-    background: linear-gradient(135deg, rgba(229,160,13,0.12), rgba(74,222,128,0.08));
-    border: 1px solid rgba(229,160,13,0.3); border-radius: var(--radius);
+    background: linear-gradient(135deg, var(--accent-dim), rgba(74,222,128,0.08));
+    border: 1px solid var(--accent-dim); border-radius: var(--radius);
     padding: 28px 32px; margin-bottom: 20px; text-align: center;
   }
   .welcome-icon  { font-size: 42px; margin-bottom: 10px; }
@@ -193,10 +193,10 @@
 <div class="logo-row">
   <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="32" height="32">
     <rect width="24" height="24" rx="4" fill="#0d0d0f"/>
-    <path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
-    <polyline stroke="#e5a00d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
+    <path stroke="var(--accent)" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
+    <polyline stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
   </svg>
-  <span class="logo-name">{{ plex_server_name or 'PLEX SERVER' }}</span>
+  <span class="logo-name">{{ server_name or (provider | upper ~ ' SERVER') }}</span>
 </div>
 
 {% if step == 'error' %}
@@ -214,7 +214,13 @@
     <div class="step-num">1</div>
     <div>
       <h2>You're Invited!</h2>
-      <div class="subtitle">{% if plex_server_name %}Join {{ plex_server_name }} on Plex{% else %}Join this Plex server{% endif %}</div>
+      <div class="subtitle">
+        {% if provider == 'jellyfin' %}
+          {% if server_name %}Join {{ server_name }} on Jellyfin{% else %}Join this Jellyfin server{% endif %}
+        {% else %}
+          {% if server_name %}Join {{ server_name }} on Plex{% else %}Join this Plex server{% endif %}
+        {% endif %}
+      </div>
     </div>
   </div>
 
@@ -253,6 +259,7 @@
       {% endif %}
     </div>
 
+    {% if provider != 'jellyfin' %}
     <div class="summary-row">
       {% if invite.allow_channels %}
         <span class="summary-check">✓</span>
@@ -264,6 +271,7 @@
         <span class="summary-val" style="color:var(--muted)">Not included</span>
       {% endif %}
     </div>
+    {% endif %}
 
     <div class="summary-row">
       {% if invite.duration_days %}
@@ -278,6 +286,17 @@
     </div>
   </div>
 
+  {% if provider == 'jellyfin' %}
+  <p style="font-size:14px;line-height:1.65;color:var(--muted);margin-bottom:6px;">
+    Accepting this invite creates a new account for you on this <strong style="color:var(--text)">Jellyfin</strong> server — just pick a username and password on the next step.
+  </p>
+
+  <div class="btn-row">
+    <a href="/invite/{{ token }}?step=accept" class="btn btn-primary">
+      Create My Account →
+    </a>
+  </div>
+  {% else %}
   <p style="font-size:14px;line-height:1.65;color:var(--muted);margin-bottom:6px;">
     To accept this invite you need a free <strong style="color:var(--text)">Plex account</strong>.
     If you don't have one yet, create one first — it only takes a minute.
@@ -291,6 +310,7 @@
       I have a Plex account →
     </a>
   </div>
+  {% endif %}
 </div>
 
 {% elif step == 'accept' %}
@@ -299,8 +319,10 @@
   <div class="card-header">
     <div class="step-num">2</div>
     <div>
-      <h2>Accept Your Invite</h2>
-      <div class="subtitle">Enter your Plex username or email address</div>
+      <h2>{% if provider == 'jellyfin' %}Create Your Account{% else %}Accept Your Invite{% endif %}</h2>
+      <div class="subtitle">
+        {% if provider == 'jellyfin' %}Choose a username and password for this server{% else %}Enter your Plex username or email address{% endif %}
+      </div>
     </div>
   </div>
 
@@ -311,10 +333,29 @@
   {# nosemgrep: django-no-csrf-token -- Flask-WTF CSRFProtect is active globally; token provided on next line #}
   <form method="post" action="{{ url_for('accept_invite', token=token) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if provider == 'jellyfin' %}
     <div class="field">
-      <label for="plex_username">Plex Username or Email</label>
-      <input type="text" id="plex_username" name="plex_username"
-             value="{{ plex_username or '' }}"
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username"
+             value="{{ username or '' }}"
+             placeholder="your-username"
+             autocomplete="username" autofocus spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password"
+             placeholder="At least 6 characters"
+             autocomplete="new-password">
+    </div>
+    <div class="btn-row">
+      <a href="/invite/{{ token }}" class="btn btn-outline">← Back</a>
+      <button type="submit" class="btn btn-primary">Create Account →</button>
+    </div>
+    {% else %}
+    <div class="field">
+      <label for="username">Plex Username or Email</label>
+      <input type="text" id="username" name="username"
+             value="{{ username or '' }}"
              placeholder="your-username or you@example.com"
              autocomplete="username" autofocus spellcheck="false">
     </div>
@@ -322,21 +363,24 @@
       <a href="/invite/{{ token }}" class="btn btn-outline">← Back</a>
       <button type="submit" class="btn btn-primary">Accept Invite →</button>
     </div>
+    {% endif %}
   </form>
 
+  {% if provider != 'jellyfin' %}
   <div class="divider">don't have an account?</div>
   <a href="https://www.plex.tv/sign-up/" target="_blank" rel="noopener"
      style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--accent);text-decoration:none;">
     Create a free Plex account ↗
   </a>
+  {% endif %}
 </div>
 
 {% elif step == 'done' %}
 <!-- ===================== STEP 3+4: DONE / OFF-BOARDING ===================== -->
 <div class="welcome-banner">
   <div class="welcome-icon">🎉</div>
-  <div class="welcome-title">Welcome, <span class="welcome-user">{{ plex_username }}</span>!</div>
-  <div class="welcome-sub">You now have access to {% if plex_server_name %}{{ plex_server_name }}{% else %}the server{% endif %}</div>
+  <div class="welcome-title">Welcome, <span class="welcome-user">{{ username }}</span>!</div>
+  <div class="welcome-sub">You now have access to {% if server_name %}{{ server_name }}{% else %}the server{% endif %}</div>
 </div>
 
 {% if section_names %}
@@ -350,12 +394,12 @@
 </div>
 {% endif %}
 
-<!-- Step 3: Set up Plex client -->
+<!-- Step 3: Set up client -->
 <div class="guide-card">
-  <div class="guide-step-num">Step 3 · Set Up Your Plex Client</div>
-  <div class="guide-title">Configure Plex on Your Devices</div>
+  <div class="guide-step-num">Step 3 · Set Up Your {{ 'Jellyfin' if provider == 'jellyfin' else 'Plex' }} Client</div>
+  <div class="guide-title">Configure {{ 'Jellyfin' if provider == 'jellyfin' else 'Plex' }} on Your Devices</div>
   <div class="guide-desc">
-    We've written setup guides to help you install and configure the Plex app on
+    We've written setup guides to help you install and configure the app on
     your TV, phone, computer, and more. Follow the guides for the best experience.
   </div>
   <a href="{{ onboard_wiki_url }}" target="_blank" rel="noopener" class="btn btn-primary">
@@ -376,21 +420,34 @@
   </a>
 </div>
 
-<!-- Open Plex -->
+<!-- Open server -->
 <div class="guide-card">
   <div class="guide-step-num">Ready to Watch?</div>
   <div class="guide-title">Start Streaming</div>
   <div class="guide-desc">
+    {% if provider == 'jellyfin' %}
+    Open Jellyfin Web or download the app on your device and sign in with the username and password you just created.
+    {% else %}
     Open Plex Web or download the app on your device and sign in with the account you
     just used to accept this invite.
+    {% endif %}
   </div>
   <div class="btn-row" style="margin-top:0;">
-    <a href="{{ plex_url }}/web/" target="_blank" rel="noopener" class="btn btn-plex">
+    {% if provider == 'jellyfin' %}
+    <a href="{{ server_url }}/web/" target="_blank" rel="noopener" class="btn btn-plex">
+      Open Jellyfin Web ↗
+    </a>
+    <a href="https://jellyfin.org/downloads/" target="_blank" rel="noopener" class="btn btn-outline">
+      Download Jellyfin App ↗
+    </a>
+    {% else %}
+    <a href="{{ server_url }}/web/" target="_blank" rel="noopener" class="btn btn-plex">
       Open Plex Web ↗
     </a>
     <a href="https://www.plex.tv/media-server-downloads/#plex-app" target="_blank" rel="noopener" class="btn btn-outline">
       Download Plex App ↗
     </a>
+    {% endif %}
   </div>
 </div>
 

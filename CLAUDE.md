@@ -22,10 +22,16 @@ Copy `.env.example` to `.env` and fill in values before running.
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `PLEX_URL` | yes | `http://127.0.0.1:32400` | Plex server address |
-| `PLEX_TOKEN` | yes | — | Plex auth token |
+| `PLEX_ENABLED` | no | `true` | Enable Plex support (on by default for backward compat) |
+| `JELLYFIN_ENABLED` | no | `false` | Enable Jellyfin support (can combine with Plex) |
+| `PLEX_URL` | if Plex | `http://127.0.0.1:32400` | Plex server address |
+| `PLEX_TOKEN` | if Plex | — | Plex auth token |
+| `JELLYFIN_URL` | if Jellyfin | `http://127.0.0.1:8096` | Jellyfin server address |
+| `JELLYFIN_API_KEY` | if Jellyfin | — | Jellyfin API key |
+| `UI_THEME` | no | auto | `plex` or `jellyfin` accent; auto-matches single enabled provider, else user-toggleable |
 | `SECRET_KEY` | yes | — | Session cookie signing key |
-| `SECTION_MAPPING` | yes | — | JSON: path prefix → Plex section ID |
+| `SECTION_MAPPING` | if Plex | — | JSON: path prefix → Plex section ID |
+| `JELLYFIN_SECTION_MAPPING` | if Jellyfin | — | JSON: path prefix → Jellyfin library ItemId |
 | `SONARR_URL` / `SONARR_API_KEY` | no | — | Enables quality profile lookups |
 | `RADARR_URL` / `RADARR_API_KEY` | no | — | Enables quality profile lookups |
 | `WEBHOOK_DELAY` | no | `30s` | Wait before scanning (e.g. `30s`, `5m`) |
@@ -68,9 +74,8 @@ templates/
 |---|---|---|---|
 | `/webhook/sonarr` | POST | none (CSRF exempt) | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | none (CSRF exempt) | Radarr webhook receiver |
-| `/` | GET/POST | session | Sync tab — manual scan UI + history |
-| `/now-playing` | GET | session | Now Playing tab — active Plex streams |
-| `/invites` | GET | session | Invite management tab |
+| `/` | GET/POST | session | Sync tab — manual scan UI, history, Full Library Scan, Now Playing (Plex and/or Jellyfin), and (Plex only) Server Stats |
+| `/invites` | GET | session | Invite management tab (Plex and/or Jellyfin; redirects to `/` when neither is enabled) |
 | `/invites/create` | POST | session | Create a new invite link |
 | `/invites/revoke/<token>` | POST | session | Revoke an invite link |
 | `/invites/revoke_grant/<id>` | POST | session | Revoke an accepted grant |
@@ -78,11 +83,11 @@ templates/
 | `/invite/<token>/accept` | POST | none | Accept an invite (adds Plex friend) |
 | `/login` | GET/POST | — | Login page |
 | `/logout` | GET | session | Logout |
-| `/health` | GET | none | Health check (Plex, rclone, queue depth) |
+| `/health` | GET | none | Health check (Plex + Jellyfin connectivity, rclone, queue depth) |
 | `/api/stats` | GET | none | Aggregate stats (Homepage widget) |
-| `/api/sessions` | GET | session | Raw Plex session data for Now Playing |
-| `/api/scan/library` | POST | session (CSRF exempt) | Trigger a full Plex library section scan |
-| `/api/libraries` | GET | session | List Plex library sections |
+| `/api/sessions` | GET | session | Combined Plex and/or Jellyfin session data for Now Playing |
+| `/api/scan/library` | POST | session (CSRF exempt) | Trigger a full scan of one Plex section or Jellyfin library (provider-prefixed id, e.g. `plex:1` / `jellyfin:<itemId>`) |
+| `/api/libraries` | GET | session | List Plex sections and/or Jellyfin libraries, provider-prefixed |
 | `/api/geoip` | GET | session | Server-side IP geolocation proxy (cached) |
 | `/api/thumb` | GET | session | Proxy Plex artwork thumbnails |
 

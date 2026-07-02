@@ -145,9 +145,24 @@ def apply_path_mapping(path: str, mapping: dict, label: str, is_dir: bool = True
 # Configuration
 # ---------------------------------------------------------------------------
 
+# Media server selection — at least one must be enabled. PLEX_ENABLED defaults to
+# true so existing installs (which never set this var) keep working unchanged.
+PLEX_ENABLED     = os.getenv("PLEX_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+JELLYFIN_ENABLED = os.getenv("JELLYFIN_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
 PLEX_URL        = os.getenv("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
 PLEX_TOKEN      = os.getenv("PLEX_TOKEN", "")
 PLEX_TIMEOUT    = parse_duration(os.getenv("PLEX_TIMEOUT", "60")) or 60
+
+JELLYFIN_URL      = os.getenv("JELLYFIN_URL", "http://127.0.0.1:8096").rstrip('/')
+JELLYFIN_API_KEY  = os.getenv("JELLYFIN_API_KEY", "")
+JELLYFIN_TIMEOUT  = parse_duration(os.getenv("JELLYFIN_TIMEOUT", "60")) or 60
+
+# UI accent theme: "plex" (amber) or "jellyfin" (purple). When only one server type
+# is enabled the theme always matches it. When both are enabled, this is just the
+# default — the user can switch via the header toggle (persisted in localStorage).
+UI_THEME        = os.getenv("UI_THEME", "").strip().lower()
+
 PORT            = int(os.getenv("PORT", "5000"))
 WEBHOOK_DELAY   = parse_duration(os.getenv("WEBHOOK_DELAY", "30"))
 MINIMUM_AGE     = parse_duration(os.getenv("MINIMUM_AGE", "0"))
@@ -189,9 +204,35 @@ plexapi.X_PLEX_PRODUCT    = PLEX_IDENTIFIER
 PATH_REPLACEMENTS        = parse_json_env("PATH_REPLACEMENTS")
 RCLONE_PATH_REPLACEMENTS = parse_json_env("RCLONE_PATH_REPLACEMENTS")
 SECTION_MAPPING          = parse_json_env("SECTION_MAPPING")
+JELLYFIN_SECTION_MAPPING = parse_json_env("JELLYFIN_SECTION_MAPPING")
+
+# Neither server type enabled — fall back to Plex so a misconfigured .env doesn't
+# silently disable all scanning.
+if not PLEX_ENABLED and not JELLYFIN_ENABLED:
+    log.warning("Neither PLEX_ENABLED nor JELLYFIN_ENABLED is true — defaulting to Plex.")
+    PLEX_ENABLED = True
+
+# Effective UI theme: explicit UI_THEME env var wins; otherwise it's implied by
+# whichever single server type is enabled; with both enabled it defaults to Plex
+# (the user can still switch in the UI).
+if UI_THEME not in ("plex", "jellyfin"):
+    UI_THEME = "jellyfin" if (JELLYFIN_ENABLED and not PLEX_ENABLED) else "plex"
+BOTH_ENABLED = PLEX_ENABLED and JELLYFIN_ENABLED
 
 # Apply secret key now that config is loaded
 app.secret_key = SECRET_KEY
+
+
+@app.context_processor
+def _inject_theme_context():
+    """Make provider/theme flags available in every template without passing
+    them explicitly at each render_template() call site."""
+    return {
+        "plex_enabled": PLEX_ENABLED,
+        "jellyfin_enabled": JELLYFIN_ENABLED,
+        "both_enabled": BOTH_ENABLED,
+        "ui_theme": UI_THEME,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -342,12 +383,13 @@ def _fetch_custom_formats_for_file(arr_type: str, file_id: int) -> list[str]:
 
 @dataclass
 class SyncTask:
-    section_id: str
     raw_path: str
     rclone_host_path: str
     age_check_path: str
     mapped_folder: str
     label: str
+    plex_section_id: Optional[str] = None
+    jellyfin_library_id: Optional[str] = None
     episode: str = ""
     quality: str = ""
     custom_formats: str = ""   # JSON-encoded list of format name strings
@@ -561,11 +603,23 @@ class InviteDB:
                     FOREIGN KEY (invite_id) REFERENCES invites(id)
                 )
             """)
+            # Migrate existing databases that lack newer columns.
+            # provider: which media server the invite/grant targets ('plex' or 'jellyfin').
+            # provider_user_id: Jellyfin's user Id (needed to delete the account on revoke);
+            #   unused/NULL for Plex grants, which are revoked by username via removeFriend().
+            existing_invites = {row[1] for row in conn.execute("PRAGMA table_info(invites)")}
+            if 'provider' not in existing_invites:
+                conn.execute("ALTER TABLE invites ADD COLUMN provider TEXT DEFAULT 'plex'")
+            existing_grants = {row[1] for row in conn.execute("PRAGMA table_info(invite_grants)")}
+            if 'provider' not in existing_grants:
+                conn.execute("ALTER TABLE invite_grants ADD COLUMN provider TEXT DEFAULT 'plex'")
+            if 'provider_user_id' not in existing_grants:
+                conn.execute("ALTER TABLE invite_grants ADD COLUMN provider_user_id TEXT DEFAULT ''")
             conn.commit()
 
     def create(self, label: str, section_ids: list, allow_sync: bool,
                allow_channels: bool, home_user: bool, duration_days: int,
-               max_uses: int, link_expires_days: int) -> str:
+               max_uses: int, link_expires_days: int, provider: str = 'plex') -> str:
         token = _secrets.token_urlsafe(16)
         link_exp = int(time.time() + link_expires_days * 86400) if link_expires_days else None
         with self._lock:
@@ -573,11 +627,11 @@ class InviteDB:
                 conn.execute("""
                     INSERT INTO invites
                         (token, label, section_ids, allow_sync, allow_channels, home_user,
-                         duration_days, max_uses, created_at, link_expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         duration_days, max_uses, created_at, link_expires_at, provider)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (token, label, json.dumps(section_ids), int(allow_sync),
                       int(allow_channels), int(home_user), duration_days,
-                      max_uses, int(time.time()), link_exp))
+                      max_uses, int(time.time()), link_exp, provider))
                 conn.commit()
         return token
 
@@ -597,15 +651,16 @@ class InviteDB:
                 ).fetchall()
                 return [dict(r) for r in rows]
 
-    def record_acceptance(self, invite_id: int, plex_username: str, duration_days: int):
+    def record_acceptance(self, invite_id: int, username: str, duration_days: int,
+                          provider: str = 'plex', provider_user_id: str = ''):
         access_exp = int(time.time() + duration_days * 86400) if duration_days else None
         with self._lock:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("""
                     INSERT INTO invite_grants
-                        (invite_id, plex_username, accepted_at, access_expires_at)
-                    VALUES (?, ?, ?, ?)
-                """, (invite_id, plex_username, int(time.time()), access_exp))
+                        (invite_id, plex_username, accepted_at, access_expires_at, provider, provider_user_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (invite_id, username, int(time.time()), access_exp, provider, provider_user_id))
                 conn.execute("UPDATE invites SET uses = uses + 1 WHERE id = ?", (invite_id,))
                 conn.commit()
 
@@ -696,6 +751,210 @@ def invalidate_plex():
     global _plex
     with _plex_lock:
         _plex = None
+
+
+# ---------------------------------------------------------------------------
+# Jellyfin connection
+# ---------------------------------------------------------------------------
+
+def _jellyfin_headers() -> dict:
+    return {"X-Emby-Token": JELLYFIN_API_KEY, "Content-Type": "application/json"}
+
+
+def get_jellyfin_info() -> Optional[dict]:
+    """Return Jellyfin /System/Info as a dict, or None if unreachable."""
+    if not JELLYFIN_ENABLED or not JELLYFIN_URL or not JELLYFIN_API_KEY:
+        return None
+    try:
+        r = requests.get(f"{JELLYFIN_URL}/System/Info",
+                          headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+        if r.ok:
+            return r.json()
+        log.error("Jellyfin /System/Info returned %d", r.status_code)
+    except requests.RequestException as exc:
+        log.error("Could not connect to Jellyfin: %s", exc)
+    return None
+
+
+def jellyfin_scan_path(path: str, label: str) -> None:
+    """Targeted scan: notify Jellyfin's real-time monitor that a path changed.
+
+    Jellyfin has no direct 'scan this folder' endpoint like Plex's
+    library.update(path=...). The equivalent mechanism is /Library/Media/Updated,
+    which is the same API its own file-system watcher uses internally — passing
+    a path queues an incremental (partial) library scan for that path only.
+    """
+    try:
+        r = requests.post(
+            f"{JELLYFIN_URL}/Library/Media/Updated",
+            headers=_jellyfin_headers(),
+            json={"Updates": [{"Path": path, "UpdateType": "Modified"}]},
+            timeout=JELLYFIN_TIMEOUT,
+        )
+        if not r.ok:
+            raise RuntimeError(f"Jellyfin returned {r.status_code}: {r.text[:200]}")
+        log.info("[%s] [JELLYFIN] Targeted scan requested for '%s'", label, path)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Jellyfin connection error: {exc}") from exc
+
+
+def jellyfin_full_library_scan(library_id: str) -> None:
+    """Trigger a full recursive rescan of one Jellyfin library (CollectionFolder ItemId)."""
+    r = requests.post(
+        f"{JELLYFIN_URL}/Items/{library_id}/Refresh",
+        headers=_jellyfin_headers(),
+        params={"Recursive": "true", "ImageRefreshMode": "Default", "MetadataRefreshMode": "Default"},
+        timeout=JELLYFIN_TIMEOUT,
+    )
+    r.raise_for_status()
+
+
+def jellyfin_list_libraries() -> list:
+    """Return Jellyfin libraries as [{id, title, type}, ...]."""
+    r = requests.get(f"{JELLYFIN_URL}/Library/VirtualFolders",
+                      headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+    return [
+        {"id": lib.get("ItemId", ""), "title": lib.get("Name", ""), "type": lib.get("CollectionType") or "mixed"}
+        for lib in r.json()
+    ]
+
+
+def jellyfin_sessions() -> list:
+    """Return active Jellyfin playback sessions, normalized to the same shape
+    used for Plex sessions by /api/sessions (see api_sessions()).
+
+    thumb_key is prefixed "jellyfin:<itemId>" so /api/thumb can tell it apart
+    from a Plex library key and proxy it through Jellyfin's Images API instead.
+    """
+    r = requests.get(f"{JELLYFIN_URL}/Sessions", headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+
+    result = []
+    for s in r.json():
+        item = s.get('NowPlayingItem')
+        if not item:
+            continue  # session exists but nothing is actively playing
+
+        play_state = s.get('PlayState', {}) or {}
+        transcode = s.get('TranscodingInfo')
+
+        media_type = 'episode' if item.get('Type') == 'Episode' else \
+                     'movie' if item.get('Type') == 'Movie' else (item.get('Type') or 'unknown').lower()
+
+        season_ep = None
+        if media_type == 'episode':
+            season = item.get('ParentIndexNumber')
+            episode = item.get('IndexNumber')
+            if season is not None and episode is not None:
+                season_ep = f"S{int(season):02d}E{int(episode):02d}"
+
+        position = play_state.get('PositionTicks', 0) or 0
+        runtime = item.get('RunTimeTicks', 0) or 0
+        progress_pct = round((position / runtime * 100), 1) if runtime > 0 else 0
+
+        if transcode:
+            video_direct = transcode.get('IsVideoDirect', False)
+            audio_direct = transcode.get('AudioDirect', transcode.get('IsAudioDirect', False))
+            video_label = 'Direct Stream' if video_direct else 'Transcode'
+            audio_label = 'Direct Stream' if audio_direct else 'Transcode'
+            stream_type = video_label if video_label == audio_label else f"{video_label} · Audio {audio_label}"
+        else:
+            play_method = play_state.get('PlayMethod', 'DirectPlay')
+            stream_type = {'DirectPlay': 'Direct Play', 'DirectStream': 'Direct Stream',
+                           'Transcode': 'Transcode'}.get(play_method, play_method)
+
+        video_resolution = None
+        bitrate_kbps = None
+        streams = item.get('MediaStreams', [])
+        for ms in streams:
+            if ms.get('Type') == 'Video':
+                h = ms.get('Height')
+                if h:
+                    video_resolution = f"{h}p"
+                if ms.get('BitRate'):
+                    bitrate_kbps = round(ms['BitRate'] / 1000)
+                break
+        if not bitrate_kbps and transcode and transcode.get('Bitrate'):
+            bitrate_kbps = round(transcode['Bitrate'] / 1000)
+
+        thumb_item_id = (item.get('SeriesId') if media_type == 'episode' and item.get('SeriesId')
+                         else item.get('Id'))
+
+        result.append({
+            'session_id':       str(s.get('Id', '')),
+            'rating_key':       str(item.get('Id', '')),
+            'plex_item_key':    '',
+            'session_source':   'jellyfin',
+            'type':             media_type,
+            'title':            item.get('Name', ''),
+            'year':             item.get('ProductionYear'),
+            'show_title':       item.get('SeriesName'),
+            'season_episode':   season_ep,
+            'thumb_key':        f"jellyfin:{thumb_item_id}" if thumb_item_id else None,
+            'progress_pct':     progress_pct,
+            'view_offset_ms':   round(position / 10000) if position else 0,
+            'duration_ms':      round(runtime / 10000) if runtime else 0,
+            'state':            'paused' if play_state.get('IsPaused') else 'playing',
+            'stream_type':      stream_type,
+            'video_resolution': video_resolution,
+            'bitrate_kbps':     bitrate_kbps,
+            'user':             s.get('UserName', 'Unknown'),
+            'player_device':    s.get('DeviceName', ''),
+            'player_platform':  s.get('Client', ''),
+            'player_product':   s.get('ApplicationVersion', ''),
+            'player_address':   s.get('RemoteEndPoint', ''),
+            'player_remote_address': s.get('RemoteEndPoint', ''),
+        })
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Jellyfin user management (invites)
+# ---------------------------------------------------------------------------
+#
+# Jellyfin has no "friend"/account-linking concept like Plex — inviting
+# someone means creating an actual local Jellyfin user account on their
+# behalf (the same approach used by third-party invite tools such as
+# Wizarr), then restricting that account's library access via its Policy.
+
+def jellyfin_create_user(username: str, password: str) -> dict:
+    """Create a new local Jellyfin user. Returns the created user dict (includes 'Id')."""
+    r = requests.post(f"{JELLYFIN_URL}/Users/New",
+                       headers=_jellyfin_headers(),
+                       json={"Name": username, "Password": password},
+                       timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def jellyfin_set_user_library_access(user_id: str, library_ids: list, allow_downloads: bool = False) -> None:
+    """Restrict a Jellyfin user's library access. An empty library_ids list means
+    'all libraries' (EnableAllFolders=True), matching the Plex invite UI's
+    'leave unchecked to grant access to everything' behaviour.
+
+    There is no standalone GET for a user's Policy (405) — the current policy
+    is read from the full user object and posted back with our changes merged in.
+    """
+    r = requests.get(f"{JELLYFIN_URL}/Users/{user_id}", headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+    policy = r.json().get('Policy', {})
+
+    policy['EnableAllFolders'] = not bool(library_ids)
+    policy['EnabledFolders'] = list(library_ids) if library_ids else []
+    policy['EnableContentDownloading'] = allow_downloads
+    policy['IsAdministrator'] = False
+
+    r = requests.post(f"{JELLYFIN_URL}/Users/{user_id}/Policy",
+                       headers=_jellyfin_headers(), json=policy, timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+
+
+def jellyfin_delete_user(user_id: str) -> None:
+    """Delete a local Jellyfin user account (used to revoke invite access)."""
+    r = requests.delete(f"{JELLYFIN_URL}/Users/{user_id}", headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+    if r.status_code not in (200, 204, 404):
+        r.raise_for_status()
 
 
 # ---------------------------------------------------------------------------
@@ -792,34 +1051,51 @@ def sync_worker():
                 else:
                     log.warning("[%s] [AGE] Path not visible in container: %s", task.label, check)
 
-            # Plex scan with retry on timeout
-            plex_instance = get_plex()
-            if plex_instance:
-                for attempt in range(1, 4):
-                    try:
-                        library = plex_instance.library.sectionByID(task.section_id)
-                        log.info("[%s] [SCAN] Attempt %d/3 → %s", task.label, attempt, task.mapped_folder)
-                        library.update(path=task.mapped_folder)
+            # Scan each enabled, matched target independently — a failure on one
+            # provider doesn't prevent the other from being attempted.
+            target_errors = []
 
-                        time.sleep(20)
-                        item = _find_plex_item(plex_instance, library, task)
+            if PLEX_ENABLED and task.plex_section_id:
+                try:
+                    plex_instance = get_plex()
+                    if not plex_instance:
+                        raise RuntimeError("Plex not connected")
+                    for attempt in range(1, 4):
+                        try:
+                            library = plex_instance.library.sectionByID(task.plex_section_id)
+                            log.info("[%s] [SCAN] Attempt %d/3 → %s", task.label, attempt, task.mapped_folder)
+                            library.update(path=task.mapped_folder)
 
-                        if item:
-                            log.info("[%s] [METADATA] Found '%s', analyzing...", task.label, item.title)
-                            item.analyze()
-                        else:
-                            log.warning("[%s] [METADATA] Item not found in library DB.", task.label)
-                        break
+                            time.sleep(20)
+                            item = _find_plex_item(plex_instance, library, task)
 
-                    except Exception as exc:
-                        if "timeout" in str(exc).lower() and attempt < 3:
-                            log.warning("[%s] [PLEX] Timeout on attempt %d, retrying in 10s...", task.label, attempt)
-                            # Reconnect in case the connection went stale
-                            invalidate_plex()
-                            plex_instance = get_plex()
-                            time.sleep(10)
-                        else:
-                            raise
+                            if item:
+                                log.info("[%s] [METADATA] Found '%s', analyzing...", task.label, item.title)
+                                item.analyze()
+                            else:
+                                log.warning("[%s] [METADATA] Item not found in library DB.", task.label)
+                            break
+
+                        except Exception as exc:
+                            if "timeout" in str(exc).lower() and attempt < 3:
+                                log.warning("[%s] [PLEX] Timeout on attempt %d, retrying in 10s...", task.label, attempt)
+                                # Reconnect in case the connection went stale
+                                invalidate_plex()
+                                plex_instance = get_plex()
+                                time.sleep(10)
+                            else:
+                                raise
+                except Exception as exc:
+                    target_errors.append(f"Plex: {exc}")
+
+            if JELLYFIN_ENABLED and task.jellyfin_library_id:
+                try:
+                    jellyfin_scan_path(task.mapped_folder, task.label)
+                except Exception as exc:
+                    target_errors.append(f"Jellyfin: {exc}")
+
+            if target_errors:
+                raise RuntimeError("; ".join(target_errors))
 
         except Exception as exc:
             status = "error"
@@ -874,7 +1150,7 @@ def custom_format_refresh_scheduler() -> None:
 
 
 def invite_expiry_scheduler() -> None:
-    """Background thread: auto-revoke expired Plex access grants once per hour."""
+    """Background thread: auto-revoke expired Plex/Jellyfin access grants once per hour."""
     log.info("Invite expiry scheduler started")
     # Initial delay before first check
     deadline = time.monotonic() + 60
@@ -884,16 +1160,22 @@ def invite_expiry_scheduler() -> None:
         try:
             expired = invite_db.get_expired_grants()
             for grant in expired:
+                provider = grant.get('provider') or 'plex'
                 try:
-                    plex_instance = get_plex()
-                    if plex_instance:
-                        account = plex_instance.myPlexAccount()
-                        account.removeFriend(grant['plex_username'])
-                        log.info("[INVITE] Auto-revoked expired access for '%s'", grant['plex_username'])
+                    if provider == 'jellyfin':
+                        if grant.get('provider_user_id'):
+                            jellyfin_delete_user(grant['provider_user_id'])
+                            log.info("[INVITE] Auto-revoked expired Jellyfin access for '%s'", grant['plex_username'])
+                    else:
+                        plex_instance = get_plex()
+                        if plex_instance:
+                            account = plex_instance.myPlexAccount()
+                            account.removeFriend(grant['plex_username'])
+                            log.info("[INVITE] Auto-revoked expired Plex access for '%s'", grant['plex_username'])
                     invite_db.revoke_grant(grant['id'])
                 except Exception as exc:
-                    log.warning("[INVITE] Error auto-revoking '%s': %s",
-                                grant.get('plex_username'), exc)
+                    log.warning("[INVITE] Error auto-revoking %s access for '%s': %s",
+                                provider, grant.get('plex_username'), exc)
         except Exception as exc:
             log.error("[INVITE] Expiry scheduler error: %s", exc)
         deadline = time.monotonic() + 3600
@@ -912,7 +1194,7 @@ def _find_plex_item(plex_instance, library, task: SyncTask):
         log.info("[%s] [METADATA] Lookup %d/6 for '%s'", task.label, i + 1, clean_title)
         try:
             encoded = urllib.parse.quote(search_path)
-            xml = plex_instance.query(f"/library/sections/{task.section_id}/all?path={encoded}")
+            xml = plex_instance.query(f"/library/sections/{task.plex_section_id}/all?path={encoded}")
             container = MediaContainer(plex_instance, xml)
             if container.metadata:
                 return container.metadata[0]
@@ -1103,19 +1385,32 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
                      if USE_RCLONE else ""
     age_check_path = mapped_folder
 
-    # Section mapping
+    # Section mapping — each enabled provider is matched independently against
+    # its own path-prefix map. A path only needs to match at least one enabled
+    # provider's mapping to be queued; matching providers are scanned, others skipped.
     comp = mapped_folder.rstrip('/').lower()
-    section_id = next(
-        (SECTION_MAPPING[p] for p in sorted(SECTION_MAPPING, key=len, reverse=True) if comp.startswith(p)),
-        None
-    )
 
-    if not section_id:
+    plex_section_id = None
+    if PLEX_ENABLED:
+        plex_section_id = next(
+            (SECTION_MAPPING[p] for p in sorted(SECTION_MAPPING, key=len, reverse=True) if comp.startswith(p)),
+            None
+        )
+
+    jellyfin_library_id = None
+    if JELLYFIN_ENABLED:
+        jellyfin_library_id = next(
+            (JELLYFIN_SECTION_MAPPING[p] for p in sorted(JELLYFIN_SECTION_MAPPING, key=len, reverse=True) if comp.startswith(p)),
+            None
+        )
+
+    if not plex_section_id and not jellyfin_library_id:
         log.warning("[%s] [SKIP] No section mapping for '%s'", label, mapped_folder)
         return {"status": "skipped", "reason": "no section mapping"}, 200
 
     task = SyncTask(
-        section_id=section_id,
+        plex_section_id=plex_section_id,
+        jellyfin_library_id=jellyfin_library_id,
         raw_path=raw_path,
         rclone_host_path=rclone_path,
         age_check_path=age_check_path,
@@ -1467,7 +1762,9 @@ def _demo_history() -> list:
         {
             "ts": (now - timedelta(hours=4, minutes=17)).strftime("%Y-%m-%dT%H:%M:%S"),
             "label": "RADARR", "status": "error",
-            "error": "ReadTimeout: Plex did not respond within 60s",
+            "error": ("ReadTimeout: Jellyfin did not respond within 60s"
+                      if (JELLYFIN_ENABLED and not PLEX_ENABLED)
+                      else "ReadTimeout: Plex did not respond within 60s"),
             "duration_s": 60.0,
             "path": "/media/movies/Avatar The Way of Water (2022)/",
             "episode": "", "quality": "Bluray-2160p",
@@ -1646,6 +1943,7 @@ def manual_webhook():
         no_quality_qs=no_quality_qs,
         no_profile_qs=no_profile_qs,
         plex_url=PLEX_URL,
+        jellyfin_url=JELLYFIN_URL,
         demo=session.get('demo', False),
     )
 
@@ -1738,14 +2036,23 @@ def api_server_stats():
 
 @app.route('/health', methods=['GET'])
 def health():
-    plex_ok = get_plex() is not None
-    return jsonify({
-        "status": "ok" if plex_ok else "degraded",
+    plex_ok = get_plex() is not None if PLEX_ENABLED else None
+    jellyfin_ok = get_jellyfin_info() is not None if JELLYFIN_ENABLED else None
+
+    enabled_ok = [ok for ok in (plex_ok, jellyfin_ok) if ok is not None]
+    all_ok = bool(enabled_ok) and all(enabled_ok)
+
+    resp = {
+        "status": "ok" if all_ok else "degraded",
+        "plex_enabled": PLEX_ENABLED,
         "plex_connected": plex_ok,
+        "jellyfin_enabled": JELLYFIN_ENABLED,
+        "jellyfin_connected": jellyfin_ok,
         "rclone_enabled": USE_RCLONE,
         "queue_depth": sync_queue.qsize(),
         "worker_alive": _worker_alive.is_set(),
-    }), 200 if plex_ok else 207
+    }
+    return jsonify(resp), 200 if all_ok else 207
 
 
 _plex_update_cache: dict = {"ts": 0, "data": None}
@@ -1842,13 +2149,17 @@ def api_stats():
 @app.route('/api/sessions', methods=['GET'])
 @requires_auth
 def api_sessions():
-    """Return current Plex sessions for the Now Playing dashboard."""
+    """Return current Plex and/or Jellyfin sessions for the Now Playing dashboard."""
     if session.get('demo'):
+        # Demo player labels/session_source reflect whichever provider(s) are
+        # actually enabled, so Jellyfin-only screenshots don't show "Plex for ..."
+        demo_source = 'jellyfin' if (JELLYFIN_ENABLED and not PLEX_ENABLED) else 'plex'
         demo_result = []
         for s in _DEMO_SESSIONS:
+            player_label = s['player'].replace('Plex', 'Jellyfin') if demo_source == 'jellyfin' else s['player']
             demo_result.append({
                 'session_id': f"demo-{s['user']}",
-                'rating_key': '', 'plex_item_key': '', 'type': s['type'],
+                'rating_key': '', 'plex_item_key': '', 'session_source': demo_source, 'type': s['type'],
                 'title': s['title'], 'year': None,
                 'show_title': s.get('show'), 'season_episode': s.get('episode'),
                 'thumb_key': s.get('thumb_key'),
@@ -1858,16 +2169,39 @@ def api_sessions():
                 'video_resolution': s['quality'].replace('p','') if s['quality'].endswith('p') else s['quality'],
                 'bitrate_kbps': None,
                 'user': s['user'],
-                'player_device': s['player'], 'player_platform': '', 'player_product': '',
+                'player_device': player_label, 'player_platform': '', 'player_product': '',
                 'player_address': s.get('player_address', ''), 'player_remote_address': s.get('player_remote_address', ''),
             })
-        return jsonify({'sessions': demo_result, 'machine_id': ''})
+        return jsonify({'sessions': demo_result, 'machine_id': '', 'jellyfin_server_id': 'demo-jellyfin-server'})
+
+    result = []
+    errors = []
+    machine_id = ''
+    jellyfin_server_id = ''
+
+    if JELLYFIN_ENABLED:
+        try:
+            result.extend(jellyfin_sessions())
+            jf_info = get_jellyfin_info()
+            if jf_info:
+                jellyfin_server_id = jf_info.get('Id', '')
+        except Exception as exc:
+            log.error("Error fetching Jellyfin sessions: %s", exc)
+            errors.append('jellyfin')
+
+    if not PLEX_ENABLED:
+        if errors and not result:
+            return jsonify({'error': 'Failed to retrieve sessions.', 'sessions': []}), 500
+        return jsonify({'sessions': result, 'machine_id': machine_id, 'jellyfin_server_id': jellyfin_server_id})
+
     plex_instance = get_plex()
     if not plex_instance:
+        if result:
+            # Jellyfin sessions are still valid even though Plex is down
+            return jsonify({'sessions': result, 'machine_id': machine_id, 'jellyfin_server_id': jellyfin_server_id})
         return jsonify({"error": "Plex not connected", "sessions": []}), 503
     try:
         sessions_data = plex_instance.sessions()
-        result = []
         machine_id = getattr(plex_instance, 'machineIdentifier', '')
         for s in sessions_data:
             players = getattr(s, 'players', [])
@@ -1929,6 +2263,7 @@ def api_sessions():
                 'session_id':       str(getattr(s, 'sessionKey', id(s))),
                 'rating_key':       str(getattr(s, 'ratingKey', '')),
                 'plex_item_key':    getattr(s, 'key', ''),
+                'session_source':   'plex',
                 'type':             media_type,
                 'title':            getattr(s, 'title', ''),
                 'year':             getattr(s, 'year', None),
@@ -1951,16 +2286,73 @@ def api_sessions():
                 'player_address':   player_address,
                 'player_remote_address': player_remote,
             })
-        return jsonify({'sessions': result, 'machine_id': machine_id})
+        return jsonify({'sessions': result, 'machine_id': machine_id, 'jellyfin_server_id': jellyfin_server_id})
     except Exception as exc:
-        log.error("Error fetching sessions: %s", exc)
+        log.error("Error fetching Plex sessions: %s", exc)
+        if result:
+            # Jellyfin sessions gathered above are still valid even though Plex failed
+            return jsonify({'sessions': result, 'machine_id': machine_id, 'jellyfin_server_id': jellyfin_server_id})
         return jsonify({'error': 'Failed to retrieve sessions.', 'sessions': []}), 500
+
+
+_JELLYFIN_ITEM_ID_RE = re.compile(r'^[a-fA-F0-9]{32}$')
+
+
+def _proxy_jellyfin_thumb(item_id: str, width: int, height: int):
+    """Proxy a Jellyfin item's primary image. Shares the response validation
+    (content-type whitelist + magic-byte check) used for the Plex path."""
+    if not _JELLYFIN_ITEM_ID_RE.fullmatch(item_id):
+        return '', 403
+    try:
+        resp = requests.get(
+            f"{JELLYFIN_URL}/Items/{item_id}/Images/Primary",
+            params={'maxWidth': width, 'maxHeight': height, 'quality': 90},
+            headers=_jellyfin_headers(),
+            timeout=10,
+        )
+        if resp.ok:
+            # Map the response Content-Type to a known-safe literal from a
+            # whitelist.  This breaks any taint originating from the user-
+            # supplied 'item_id' parameter flowing into the response mimetype,
+            # since the value assigned to ct is always one of our own strings.
+            _SAFE_CT = {
+                'image/jpeg', 'image/png', 'image/gif',
+                'image/webp', 'image/bmp', 'image/tiff',
+            }
+            raw_ct = resp.headers.get('Content-Type', '').split(';')[0].strip()
+            ct = raw_ct if raw_ct in _SAFE_CT else 'image/jpeg'
+            body = resp.content
+            # Validate response starts with a known image magic-byte signature.
+            # This breaks the taint chain — if Jellyfin returns anything other
+            # than a real image (e.g. an HTML error page), we refuse to forward it.
+            _IMAGE_MAGIC = (
+                b'\xff\xd8\xff',        # JPEG
+                b'\x89PNG\r\n',         # PNG
+                b'GIF8',                # GIF
+                b'RIFF',                # WebP (RIFF....WEBP)
+                b'BM',                  # BMP
+            )
+            if not any(body.startswith(magic) for magic in _IMAGE_MAGIC):
+                return '', 502
+            # make_response is neither a file-path sink (send_file) nor an
+            # HTML sink (raw tuple return), so CodeQL's path-injection rule
+            # is not triggered.  Content-Type is set explicitly from our
+            # already-sanitised whitelist value.
+            response = make_response(body)
+            response.content_type = ct
+            response.headers['Cache-Control'] = 'public, max-age=3600'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            return response
+        return '', 404
+    except requests.RequestException as exc:
+        log.error("Jellyfin thumb proxy error: %s", exc)
+        return '', 502
 
 
 @app.route('/api/thumb')
 @requires_auth
 def api_thumb():
-    """Proxy Plex thumbnails so the token never appears in the browser."""
+    """Proxy Plex/Jellyfin thumbnails so tokens never appear in the browser."""
     key = request.args.get('key', '').strip()
     if not key:
         return '', 404
@@ -1975,16 +2367,20 @@ def api_thumb():
         except Exception:
             pass
         return '', 502
-    if not (key.startswith('/library/') or key.startswith('/photo/')):
-        return '', 403
-    # Restrict to safe path characters only — prevents injection via crafted keys.
-    if not re.fullmatch(r'[/\w.\-]+', key):
-        return '', 403
     try:
         width  = max(1, min(int(request.args.get('w', '80')),  2000))
         height = max(1, min(int(request.args.get('h', '120')), 2000))
     except (ValueError, TypeError):
         return '', 400
+    if key.startswith('jellyfin:'):
+        if not JELLYFIN_ENABLED:
+            return '', 403
+        return _proxy_jellyfin_thumb(key[len('jellyfin:'):], width, height)
+    if not (key.startswith('/library/') or key.startswith('/photo/')):
+        return '', 403
+    # Restrict to safe path characters only — prevents injection via crafted keys.
+    if not re.fullmatch(r'[/\w.\-]+', key):
+        return '', 403
     try:
         resp = requests.get(
             PLEX_URL.rstrip('/') + '/photo/:/transcode',
@@ -2041,43 +2437,98 @@ def api_thumb():
 @csrf.exempt
 @requires_auth
 def api_scan_library():
-    """Trigger a full Plex library scan on a specific section."""
+    """Trigger a full library scan on a specific Plex section or Jellyfin library.
+
+    section_id is provider-prefixed (e.g. "plex:1" or "jellyfin:<itemId>") so a
+    single dropdown can offer libraries from either/both enabled servers.
+    """
     data = request.get_json(silent=True) or {}
-    section_id = str(data.get('section_id', '')).strip()
-    if not section_id:
+    raw_id = str(data.get('section_id', '')).strip()
+    if not raw_id:
         return jsonify({'error': 'section_id required'}), 400
-    plex_instance = get_plex()
-    if not plex_instance:
-        return jsonify({'error': 'Plex not connected'}), 503
-    try:
-        library = plex_instance.library.sectionByID(int(section_id))
-        library.update()
-        log.info("[MANUAL] Full scan triggered for library '%s' (section %s)", library.title, section_id)
-        return jsonify({'status': 'ok', 'library': library.title})
-    except Exception as exc:
-        log.error("[MANUAL] Full scan error for section %s: %s", section_id, exc)
-        return jsonify({'error': 'Failed to trigger full scan'}), 500
+
+    provider, _, section_id = raw_id.partition(':')
+    if not section_id:
+        # Back-compat: bare IDs (no prefix) are treated as Plex, matching old clients
+        provider, section_id = 'plex', raw_id
+
+    if provider == 'plex':
+        if not PLEX_ENABLED:
+            return jsonify({'error': 'Plex is not enabled'}), 400
+        plex_instance = get_plex()
+        if not plex_instance:
+            return jsonify({'error': 'Plex not connected'}), 503
+        try:
+            library = plex_instance.library.sectionByID(int(section_id))
+            library.update()
+            log.info("[MANUAL] Full scan triggered for Plex library '%s' (section %s)", library.title, section_id)
+            return jsonify({'status': 'ok', 'library': library.title})
+        except Exception as exc:
+            log.error("[MANUAL] Full scan error for Plex section %s: %s", section_id, exc)
+            return jsonify({'error': 'Failed to trigger full scan'}), 500
+
+    elif provider == 'jellyfin':
+        if not JELLYFIN_ENABLED:
+            return jsonify({'error': 'Jellyfin is not enabled'}), 400
+        try:
+            jellyfin_full_library_scan(section_id)
+            log.info("[MANUAL] Full scan triggered for Jellyfin library %s", section_id)
+            return jsonify({'status': 'ok', 'library': section_id})
+        except Exception as exc:
+            log.error("[MANUAL] Full scan error for Jellyfin library %s: %s", section_id, exc)
+            return jsonify({'error': 'Failed to trigger full scan'}), 500
+
+    return jsonify({'error': 'Unknown provider'}), 400
 
 
 @app.route('/api/libraries')
 @requires_auth
 def api_libraries():
-    """Return the list of Plex library sections."""
+    """Return the combined list of Plex sections and/or Jellyfin libraries.
+
+    Each entry's id is provider-prefixed ("plex:<id>" / "jellyfin:<id>") so
+    /api/scan/library can route the scan request to the right server.
+    """
     if session.get('demo'):
-        return jsonify({'libraries': [
-            {'id': '1', 'title': 'TV Shows', 'type': 'show'},
-            {'id': '2', 'title': 'Movies', 'type': 'movie'},
-        ]})
-    plex_instance = get_plex()
-    if not plex_instance:
-        return jsonify({'error': 'Plex not connected', 'libraries': []}), 503
-    try:
-        libs = [{'id': str(s.key), 'title': s.title, 'type': s.type}
-                for s in plex_instance.library.sections()]
-        return jsonify({'libraries': libs})
-    except Exception as exc:
-        log.error("[LIBRARIES] Failed to fetch Plex library sections: %s", exc)
-        return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 500
+        demo_libs = []
+        if PLEX_ENABLED:
+            demo_libs += [
+                {'id': 'plex:1', 'title': 'TV Shows', 'type': 'show', 'provider': 'plex'},
+                {'id': 'plex:2', 'title': 'Movies', 'type': 'movie', 'provider': 'plex'},
+            ]
+        if JELLYFIN_ENABLED:
+            demo_libs += [
+                {'id': 'jellyfin:1', 'title': 'TV Shows', 'type': 'tvshows', 'provider': 'jellyfin'},
+                {'id': 'jellyfin:2', 'title': 'Movies', 'type': 'movies', 'provider': 'jellyfin'},
+            ]
+        return jsonify({'libraries': demo_libs})
+
+    libs = []
+    errors = []
+
+    if PLEX_ENABLED:
+        plex_instance = get_plex()
+        if plex_instance:
+            try:
+                libs.extend({'id': f'plex:{s.key}', 'title': s.title, 'type': s.type, 'provider': 'plex'}
+                            for s in plex_instance.library.sections())
+            except Exception as exc:
+                log.error("[LIBRARIES] Failed to fetch Plex library sections: %s", exc)
+                errors.append('plex')
+        else:
+            errors.append('plex')
+
+    if JELLYFIN_ENABLED:
+        try:
+            libs.extend({'id': f"jellyfin:{lib['id']}", 'title': lib['title'], 'type': lib['type'], 'provider': 'jellyfin'}
+                        for lib in jellyfin_list_libraries())
+        except Exception as exc:
+            log.error("[LIBRARIES] Failed to fetch Jellyfin libraries: %s", exc)
+            errors.append('jellyfin')
+
+    if not libs and errors:
+        return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 503
+    return jsonify({'libraries': libs})
 
 
 _TILE_CACHE_DIR = "/data/tile_cache"
@@ -2219,26 +2670,62 @@ def _plex_section_names(plex_instance, section_ids: list) -> list[str]:
         return []
 
 
+def _jellyfin_section_names(section_ids: list) -> list[str]:
+    try:
+        all_libs = {lib['id']: lib['title'] for lib in jellyfin_list_libraries()}
+        if section_ids:
+            return [all_libs.get(str(sid), str(sid)) for sid in section_ids]
+        return list(all_libs.values())
+    except Exception:
+        return []
+
+
+def _section_names(provider: str, plex_instance, section_ids: list) -> list[str]:
+    if provider == 'jellyfin':
+        return _jellyfin_section_names(section_ids)
+    return _plex_section_names(plex_instance, section_ids) if plex_instance else []
+
+
 @app.route('/invites', methods=['GET'])
 @requires_auth
 def invites_page():
+    if not PLEX_ENABLED and not JELLYFIN_ENABLED:
+        return redirect(url_for('manual_webhook'))
     if session.get('demo'):
+        demo_libs = []
+        if PLEX_ENABLED:
+            demo_libs += [{"id": "1", "title": "TV Shows", "type": "show", "provider": "plex"},
+                          {"id": "2", "title": "Movies", "type": "movie", "provider": "plex"}]
+        if JELLYFIN_ENABLED:
+            demo_libs += [{"id": "jf1", "title": "TV Shows", "type": "tvshows", "provider": "jellyfin"},
+                          {"id": "jf2", "title": "Movies", "type": "movies", "provider": "jellyfin"}]
         return render_template('invites.html', invites=_DEMO_INVITES,
-                               libraries=[{"id": "1", "title": "TV Shows", "type": "show"},
-                                          {"id": "2", "title": "Movies", "type": "movie"}],
+                               libraries=demo_libs,
                                plex_error=None, demo=True)
 
-    plex_instance = get_plex()
+    plex_instance = get_plex() if PLEX_ENABLED else None
     libraries  = []
     plex_error = None
-    if plex_instance:
+    if PLEX_ENABLED:
+        if plex_instance:
+            try:
+                libraries += [
+                    {'id': str(s.key), 'title': s.title, 'type': s.type, 'provider': 'plex'}
+                    for s in plex_instance.library.sections()
+                ]
+            except Exception as exc:
+                plex_error = str(exc)
+        else:
+            plex_error = 'Could not connect to Plex'
+    jellyfin_error = None
+    if JELLYFIN_ENABLED:
         try:
-            libraries = [
-                {'id': str(s.key), 'title': s.title, 'type': s.type}
-                for s in plex_instance.library.sections()
+            libraries += [
+                {'id': lib['id'], 'title': lib['title'], 'type': lib['type'], 'provider': 'jellyfin'}
+                for lib in jellyfin_list_libraries()
             ]
         except Exception as exc:
-            plex_error = str(exc)
+            jellyfin_error = str(exc)
 
     invites    = invite_db.list_all()
     all_grants = invite_db.get_grants()
@@ -2247,28 +2734,35 @@ def invites_page():
         grants_by_invite.setdefault(g['invite_id'], []).append(g)
 
     now = int(time.time())
-    lib_map = {lib['id']: lib['title'] for lib in libraries}
+    lib_map = {(lib['provider'], str(lib['id'])): lib['title'] for lib in libraries}
     for inv in invites:
         inv['grants'] = grants_by_invite.get(inv['id'], [])
+        provider = inv.get('provider') or 'plex'
         try:
             inv['section_ids'] = json.loads(inv.get('section_ids', '[]') or '[]')
         except Exception:
             inv['section_ids'] = []
-        inv['section_names'] = [lib_map.get(str(sid), str(sid)) for sid in inv['section_ids']]
+        inv['section_names'] = [lib_map.get((provider, str(sid)), str(sid)) for sid in inv['section_ids']]
         le = inv.get('link_expires_at')
         inv['link_expired']  = bool(le and now > le)
         inv['max_reached']   = inv.get('max_uses', 0) > 0 and inv.get('uses', 0) >= inv.get('max_uses', 0)
         inv['is_active']     = inv.get('status') == 'active' and not inv['link_expired'] and not inv['max_reached']
 
     return render_template('invites.html', invites=invites, libraries=libraries,
-                           plex_error=plex_error, demo=session.get('demo', False))
+                           plex_error=plex_error, jellyfin_error=jellyfin_error,
+                           demo=session.get('demo', False))
 
 
 @app.route('/invites/create', methods=['POST'])
 @requires_auth
 def create_invite():
     label             = request.form.get('label', '').strip()
-    section_ids       = request.form.getlist('sections')
+    provider          = request.form.get('provider', 'plex').strip()
+    if provider not in ('plex', 'jellyfin'):
+        provider = 'plex'
+    # Section checkboxes are namespaced per-provider ("plex_sections" / "jellyfin_sections")
+    # so stray selections from the hidden provider's library grid are never submitted.
+    section_ids       = request.form.getlist(f'{provider}_sections')
     allow_sync        = 'allow_sync' in request.form
     allow_channels    = 'allow_channels' in request.form
     home_user         = 'home_user' in request.form
@@ -2276,7 +2770,7 @@ def create_invite():
     max_uses          = int(request.form.get('max_uses', '1') or '1')
     link_expires_days = int(request.form.get('link_expires_days', '7') or '7')
     invite_db.create(label, section_ids, allow_sync, allow_channels, home_user,
-                     duration_days, max_uses, link_expires_days)
+                     duration_days, max_uses, link_expires_days, provider=provider)
     return redirect(url_for('invites_page'))
 
 
@@ -2293,14 +2787,21 @@ def revoke_grant(grant_id):
     all_grants = invite_db.get_grants()
     matched = next((g for g in all_grants if g['id'] == grant_id), None)
     if matched:
+        provider = matched.get('provider') or 'plex'
         try:
-            plex_instance = get_plex()
-            if plex_instance:
-                account = plex_instance.myPlexAccount()
-                account.removeFriend(matched['plex_username'])
-                log.info("[INVITE] Manually revoked Plex access for '%s'", matched['plex_username'])
+            if provider == 'jellyfin':
+                if matched.get('provider_user_id'):
+                    jellyfin_delete_user(matched['provider_user_id'])
+                    log.info("[INVITE] Manually revoked Jellyfin access for '%s'", matched['plex_username'])
+            else:
+                plex_instance = get_plex()
+                if plex_instance:
+                    account = plex_instance.myPlexAccount()
+                    account.removeFriend(matched['plex_username'])
+                    log.info("[INVITE] Manually revoked Plex access for '%s'", matched['plex_username'])
         except Exception as exc:
-            log.warning("[INVITE] Error revoking Plex friend '%s': %s", matched.get('plex_username'), exc)
+            log.warning("[INVITE] Error revoking %s access for '%s': %s",
+                        provider, matched.get('plex_username'), exc)
         invite_db.revoke_grant(grant_id)
     return redirect(url_for('invites_page'))
 
@@ -2309,33 +2810,42 @@ def revoke_grant(grant_id):
 # Public invite / onboarding routes
 # ---------------------------------------------------------------------------
 
+def _onboard_render(invite: dict, token: str, step: str, error: Optional[str] = None,
+                    section_names: Optional[list] = None, username: str = ''):
+    """Render invite_onboard.html with all provider-aware context filled in."""
+    provider = (invite or {}).get('provider') or 'plex'
+    if provider == 'jellyfin':
+        server_name = ''
+        jf_info = get_jellyfin_info()
+        if jf_info:
+            server_name = jf_info.get('ServerName', '')
+        server_url = JELLYFIN_URL
+    else:
+        plex_instance = get_plex()
+        server_name = getattr(plex_instance, 'friendlyName', '') if plex_instance else ''
+        server_url = PLEX_URL
+    return render_template(
+        'invite_onboard.html',
+        invite=invite, section_names=section_names or [], step=step,
+        token=token, error=error, provider=provider,
+        server_name=server_name, server_url=server_url, username=username,
+        onboard_wiki_url=ONBOARD_WIKI_URL,
+        onboard_request_url=ONBOARD_REQUEST_URL,
+    )
+
+
 @app.route('/invite/<token>', methods=['GET'])
 def invite_onboard(token):
     invite = invite_db.get(token)
     err = _invite_validity(invite)
     if err:
-        return render_template('invite_onboard.html', error=err, step='error',
-                               invite=invite, section_names=[], token=token,
-                               plex_server_name='', plex_username='',
-                               plex_url=PLEX_URL,
-                               onboard_wiki_url=ONBOARD_WIKI_URL,
-                               onboard_request_url=ONBOARD_REQUEST_URL)
+        return _onboard_render(invite, token, 'error', error=err)
 
-    plex_instance   = get_plex()
-    plex_server_name = getattr(plex_instance, 'friendlyName', '') if plex_instance else ''
-    section_ids     = json.loads(invite.get('section_ids', '[]') or '[]')
-    section_names   = _plex_section_names(plex_instance, section_ids) if plex_instance else []
-
+    section_ids   = json.loads(invite.get('section_ids', '[]') or '[]')
+    section_names = _section_names(invite.get('provider') or 'plex',
+                                   get_plex() if PLEX_ENABLED else None, section_ids)
     step = request.args.get('step', 'welcome')
-    return render_template(
-        'invite_onboard.html',
-        invite=invite, section_names=section_names, step=step,
-        token=token, error=None,
-        plex_server_name=plex_server_name, plex_username='',
-        plex_url=PLEX_URL,
-        onboard_wiki_url=ONBOARD_WIKI_URL,
-        onboard_request_url=ONBOARD_REQUEST_URL,
-    )
+    return _onboard_render(invite, token, step, section_names=section_names)
 
 
 @app.route('/invite/<token>/accept', methods=['POST'])
@@ -2343,34 +2853,25 @@ def accept_invite(token):
     invite = invite_db.get(token)
     err = _invite_validity(invite)
     if err:
-        return render_template('invite_onboard.html', error=err, step='error',
-                               invite=invite, section_names=[], token=token,
-                               plex_server_name='', plex_username='',
-                               plex_url=PLEX_URL,
-                               onboard_wiki_url=ONBOARD_WIKI_URL,
-                               onboard_request_url=ONBOARD_REQUEST_URL)
+        return _onboard_render(invite, token, 'error', error=err)
 
-    plex_username    = request.form.get('plex_username', '').strip()
-    plex_instance    = get_plex()
-    plex_server_name = getattr(plex_instance, 'friendlyName', '') if plex_instance else ''
+    provider = invite.get('provider') or 'plex'
+
+    if provider == 'jellyfin':
+        return _accept_jellyfin_invite(invite, token)
+    return _accept_plex_invite(invite, token)
+
+
+def _accept_plex_invite(invite: dict, token: str):
+    plex_username = request.form.get('username', '').strip()
+    plex_instance  = get_plex()
 
     if not plex_username:
-        return render_template('invite_onboard.html', invite=invite, step='accept',
-                               error='Please enter your Plex username or email.',
-                               token=token, section_names=[], plex_server_name=plex_server_name,
-                               plex_username='',
-                               plex_url=PLEX_URL,
-                               onboard_wiki_url=ONBOARD_WIKI_URL,
-                               onboard_request_url=ONBOARD_REQUEST_URL)
-
+        return _onboard_render(invite, token, 'accept',
+                               error='Please enter your Plex username or email.')
     if not plex_instance:
-        return render_template('invite_onboard.html', invite=invite, step='accept',
-                               error='Server error: cannot connect to Plex. Please try again later.',
-                               token=token, section_names=[], plex_server_name=plex_server_name,
-                               plex_username=plex_username,
-                               plex_url=PLEX_URL,
-                               onboard_wiki_url=ONBOARD_WIKI_URL,
-                               onboard_request_url=ONBOARD_REQUEST_URL)
+        return _onboard_render(invite, token, 'accept', username=plex_username,
+                               error='Server error: cannot connect to Plex. Please try again later.')
     try:
         account       = plex_instance.myPlexAccount()
         section_ids   = json.loads(invite.get('section_ids', '[]') or '[]')
@@ -2387,36 +2888,56 @@ def accept_invite(token):
             allowCameraUpload=False,
             allowChannels=bool(invite.get('allow_channels')),
         )
-        invite_db.record_acceptance(invite['id'], plex_username, invite.get('duration_days', 0))
-        log.info("[INVITE] '%s' accepted invite '%s'", plex_username, invite.get('label', token))
-
-        return render_template(
-            'invite_onboard.html',
-            step='done', invite=invite, section_names=section_names,
-            token=token, error=None,
-            plex_server_name=plex_server_name, plex_username=plex_username,
-            plex_url=PLEX_URL,
-            onboard_wiki_url=ONBOARD_WIKI_URL,
-            onboard_request_url=ONBOARD_REQUEST_URL,
-        )
+        invite_db.record_acceptance(invite['id'], plex_username, invite.get('duration_days', 0),
+                                    provider='plex')
+        log.info("[INVITE] '%s' accepted Plex invite '%s'", plex_username, invite.get('label', token))
+        return _onboard_render(invite, token, 'done', section_names=section_names, username=plex_username)
     except Exception as exc:
         err = str(exc)
-        log.error("[INVITE] Acceptance error for '%s': %s", plex_username, exc)
+        log.error("[INVITE] Plex acceptance error for '%s': %s", plex_username, exc)
         if 'already' in err.lower() or 'exist' in err.lower():
             user_err = f"'{plex_username}' may already have access, or has already been invited."
         elif 'not found' in err.lower() or 'invalid' in err.lower() or '404' in err:
             user_err = f"Plex account '{plex_username}' not found. Please check your username or email."
         else:
             user_err = "Could not process the invite. Please try again or contact the server owner."
-        return render_template(
-            'invite_onboard.html',
-            invite=invite, step='accept', error=user_err,
-            token=token, section_names=[], plex_server_name=plex_server_name,
-            plex_username=plex_username,
-            plex_url=PLEX_URL,
-            onboard_wiki_url=ONBOARD_WIKI_URL,
-            onboard_request_url=ONBOARD_REQUEST_URL,
-        )
+        return _onboard_render(invite, token, 'accept', error=user_err, username=plex_username)
+
+
+def _accept_jellyfin_invite(invite: dict, token: str):
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '')
+
+    if not username or not password:
+        return _onboard_render(invite, token, 'accept', username=username,
+                               error='Please choose a username and password.')
+    if len(password) < 6:
+        return _onboard_render(invite, token, 'accept', username=username,
+                               error='Password must be at least 6 characters.')
+    try:
+        section_ids   = json.loads(invite.get('section_ids', '[]') or '[]')
+        section_names = _jellyfin_section_names(section_ids)
+
+        user = jellyfin_create_user(username, password)
+        user_id = user.get('Id', '')
+        jellyfin_set_user_library_access(user_id, section_ids, allow_downloads=bool(invite.get('allow_sync')))
+
+        invite_db.record_acceptance(invite['id'], username, invite.get('duration_days', 0),
+                                    provider='jellyfin', provider_user_id=user_id)
+        log.info("[INVITE] '%s' accepted Jellyfin invite '%s'", username, invite.get('label', token))
+        return _onboard_render(invite, token, 'done', section_names=section_names, username=username)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        log.error("[INVITE] Jellyfin acceptance error for '%s': %s", username, exc)
+        if status == 400:
+            user_err = f"'{username}' is already taken. Please choose a different username."
+        else:
+            user_err = "Could not process the invite. Please try again or contact the server owner."
+        return _onboard_render(invite, token, 'accept', error=user_err, username=username)
+    except Exception as exc:
+        log.error("[INVITE] Jellyfin acceptance error for '%s': %s", username, exc)
+        return _onboard_render(invite, token, 'accept', username=username,
+                               error='Could not process the invite. Please try again or contact the server owner.')
 
 
 # ---------------------------------------------------------------------------
