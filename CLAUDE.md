@@ -129,6 +129,48 @@ git checkout <old-branch>    # continue working on the existing branch
 
 This ensures changes are always based on the latest `dev` and avoids stale branch state, while preserving branches that have open PRs under review.
 
+### Branch Naming
+
+```
+claude/<feature-name>   AI-authored feature/refactor branches
+fix/<description>       Bug fixes
+hotfix/<description>    Critical production fixes (branch from master)
+```
+
+### Commit Messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <subject>
+```
+
+| Type | Use for |
+|---|---|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `refactor` | Code change that isn't a fix or feature |
+| `chore` | Maintenance, deps, release housekeeping |
+| `docs` | Documentation only |
+
+Examples:
+```
+feat(invites): add time-limited access expiry
+fix(webhook): handle missing episodeFile on rename events
+refactor: extract _sleep_interruptible helper
+chore: release v0.24.0
+```
+
+- Subject line: imperative mood, no period, ≤72 chars
+- Body (optional): explain *why*, not *what*
+- Footer: `Closes #123` or breaking change note
+
+### Pull Requests
+
+- Title matches commit message format: `type(scope): description`
+- Target branch: always `dev`
+- Body: bullet summary of what changed + manual test checklist
+
 ## No Tests
 
 There is no automated test suite. Validate changes manually via the `/health` endpoint and the web UI, or by firing test webhooks from Sonarr/Radarr.
