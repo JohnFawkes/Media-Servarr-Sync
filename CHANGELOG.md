@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Episode tooltip clipping on mobile** — the episode-count badge's hover/tap tooltip was anchored to the right edge of the badge, which regularly pushed it off the left edge of the screen on narrow viewports since the badge can sit anywhere along the history row. On screens ≤600px wide, the tooltip now centers on the viewport (fixed position, capped at 92vw/80vh with scrolling for long lists) instead of anchoring to the badge, so it's never clipped regardless of where the badge is.
+
 ## [v0.23.1] - 2026-07-02
 
 ### Fixed
