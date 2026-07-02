@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plex Dashboard</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23{{ '{:06x}'.format(0xAA5CC3 if ui_theme == 'jellyfin' else 0xE5A00D) }}' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23{{ '{:06x}'.format(0xAA5CC3 if ui_theme == 'jellyfin' else 0xE5A00D) }}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
 
-<meta name="theme-color" content="#e5a00d">
+<meta name="theme-color" content="{{ '#AA5CC3' if ui_theme == 'jellyfin' else '#e5a00d' }}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -30,6 +30,40 @@
     --info: #60a5fa;
     --radius: 4px;
   }
+
+  /* Jellyfin accent theme — applied via body[data-theme="jellyfin"], set
+     server-side from UI_THEME and (when both servers are enabled) toggled
+     client-side from a saved localStorage preference. */
+  body[data-theme="jellyfin"] {
+    --accent: #AA5CC3;
+    --accent-dim: rgba(170,92,195,0.12);
+  }
+
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+  }
+  .theme-toggle button {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .theme-toggle button.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .theme-toggle button:hover:not(.active) { color: var(--text); border-color: var(--text); }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -789,7 +823,16 @@
   .leaflet-container { background: #1a1a1f; }
 </style>
 </head>
-<body>
+<body data-theme="{{ ui_theme }}">
+{% if both_enabled %}
+<script>
+  /* Apply saved theme preference immediately to avoid a flash of the server default. */
+  (function() {
+    var saved = localStorage.getItem('servarr_ui_theme');
+    if (saved === 'plex' || saved === 'jellyfin') document.body.dataset.theme = saved;
+  })();
+</script>
+{% endif %}
 <button id="back-to-top" title="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑ Top</button>
 <aside class="legend">
   <div class="legend-title">Tag Legend</div>
@@ -812,25 +855,33 @@
     </div>
   </div>
 </aside>
+{% if plex_enabled %}
 <div class="plex-update-box" id="plex-update-box">
   <div class="plex-update-title">⬆ Plex Update</div>
   <div class="plex-update-version" id="plex-update-version"></div>
   <button class="plex-update-dismiss" id="plex-update-dismiss">Dismiss</button>
 </div>
+{% endif %}
 <div class="shell">
   <header>
     <a href="/" style="display:inline-flex;align-items:center;" title="Home">
     <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="28" height="28">
       <rect width="24" height="24" rx="4" fill="#0d0d0f"/>
-      <path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
-      <polyline stroke="#e5a00d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
+      <path stroke="var(--accent)" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
+      <polyline stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
     </svg>
     </a>
     <div class="header-meta">
       <h1>MEDIA SERVARR SYNC</h1>
       <nav class="header-nav">
         <a href="/" class="nav-link active">Sync</a>
-        <a href="/invites" class="nav-link">Invites</a>
+        {% if plex_enabled %}<a href="/invites" class="nav-link">Invites</a>{% endif %}
+        {% if both_enabled %}
+        <span class="theme-toggle" id="theme-toggle">
+          <button type="button" id="theme-btn-plex" title="Plex accent color">Plex</button>
+          <button type="button" id="theme-btn-jellyfin" title="Jellyfin accent color">Jellyfin</button>
+        </span>
+        {% endif %}
       </nav>
     </div>
     <a class="logout" href="/logout">Logout</a>
@@ -843,6 +894,7 @@
   </div>
   {% endif %}
 
+  {% if plex_enabled %}
   <div class="card" id="now-playing-card">
     <div class="card-label" style="display:flex;align-items:center;gap:6px;">
       Now Playing
@@ -902,6 +954,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
 
   <div class="card" id="trigger-scan-card">
     <div class="card-label">Trigger path scan - (Path needs to be the same as your root path in sonarr or radarr)</div>
@@ -1208,6 +1261,22 @@
   var statsHistory = { cpu_sys: [], cpu_plex: [], ram_sys: [], ram_plex: [], lan: [], wan: [] };
   var STATS_BUF = 20;
 
+  /* ---------- Theme toggle (only rendered when both Plex + Jellyfin are enabled) ---------- */
+  var THEME_LS = 'servarr_ui_theme';
+  var themePlexBtn = document.getElementById('theme-btn-plex');
+  var themeJellyfinBtn = document.getElementById('theme-btn-jellyfin');
+  function setTheme(theme) {
+    document.body.dataset.theme = theme;
+    localStorage.setItem(THEME_LS, theme);
+    if (themePlexBtn) themePlexBtn.classList.toggle('active', theme === 'plex');
+    if (themeJellyfinBtn) themeJellyfinBtn.classList.toggle('active', theme === 'jellyfin');
+  }
+  if (themePlexBtn && themeJellyfinBtn) {
+    setTheme(document.body.dataset.theme === 'jellyfin' ? 'jellyfin' : 'plex');
+    themePlexBtn.addEventListener('click', function() { setTheme('plex'); });
+    themeJellyfinBtn.addEventListener('click', function() { setTheme('jellyfin'); });
+  }
+
   /* Swap legend hint text for touch devices */
   var hint = document.getElementById('legend-interaction-hint');
   if (hint && window.matchMedia('(hover: none)').matches) {
@@ -1296,10 +1365,12 @@
       }
     }
   }
+  {% if plex_enabled %}
   fetch('/api/plex-update')
     .then(function(r) { return r.ok ? r.json() : null; })
     .then(function(d) { if (d && d.available && d.version) showPlexUpdate(d.version); })
     .catch(function() {});
+  {% endif %}
 
   window.__pjaxCleanup = function() {
     clearInterval(tick); clearInterval(npTick); clearInterval(statsTick);
@@ -1561,7 +1632,7 @@
     });
   }
   if (npBtn) npBtn.addEventListener('click', doNpRefresh);
-  doNpRefresh();
+  if (document.getElementById('now-playing-card')) doNpRefresh();
 
   /* ---------- Server Stats charts ---------- */
   var STATS_INTERVAL = 30, statsRemaining = STATS_INTERVAL;
@@ -1685,8 +1756,7 @@
   }
 
   if (statsBtn) statsBtn.addEventListener('click', function() { statsRemaining = STATS_INTERVAL; doStatsRefresh(); startStatsCountdown(); });
-  doStatsRefresh();
-  startStatsCountdown();
+  if (document.getElementById('server-stats-card')) { doStatsRefresh(); startStatsCountdown(); }
 
   /* ---------- Library scan ---------- */
   (function() {
@@ -1696,8 +1766,11 @@
       if (!sel) return;
       var libs = data.libraries || [];
       if (!libs.length) { sel.innerHTML = '<option value="">No libraries found</option>'; return; }
+      var multiProvider = libs.some(function(l) { return l.provider === 'jellyfin'; })
+                        && libs.some(function(l) { return l.provider === 'plex'; });
       sel.innerHTML = libs.map(function(l) {
-        return '<option value="' + escSel(String(l.id)) + '">' + escSel(l.title) + '</option>';
+        var prefix = multiProvider ? ('[' + (l.provider === 'jellyfin' ? 'Jellyfin' : 'Plex') + '] ') : '';
+        return '<option value="' + escSel(String(l.id)) + '">' + escSel(prefix + l.title) + '</option>';
       }).join('');
     }).catch(function() {
       var sel = document.getElementById('library-select');

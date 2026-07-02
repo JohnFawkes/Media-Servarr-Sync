@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Invites · Plex Dashboard</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23{{ '{:06x}'.format(0xAA5CC3 if ui_theme == 'jellyfin' else 0xE5A00D) }}' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23{{ '{:06x}'.format(0xAA5CC3 if ui_theme == 'jellyfin' else 0xE5A00D) }}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
 
-<meta name="theme-color" content="#e5a00d">
+<meta name="theme-color" content="{{ '#AA5CC3' if ui_theme == 'jellyfin' else '#e5a00d' }}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -21,6 +21,9 @@
     --text: #e8e8e8; --muted: #666;
     --success: #4ade80; --warn: #fb923c; --error: #f87171; --info: #60a5fa;
     --radius: 4px;
+  }
+  body[data-theme="jellyfin"] {
+    --accent: #AA5CC3; --accent-dim: rgba(170,92,195,0.12);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -38,7 +41,7 @@
     margin-bottom: 36px; border-bottom: 1px solid var(--border);
     padding-bottom: 20px;
   }
-  .logo-icon { flex-shrink: 0; filter: drop-shadow(0 0 6px rgba(229,160,13,0.5)); }
+  .logo-icon { flex-shrink: 0; filter: drop-shadow(0 0 6px {{ 'rgba(170,92,195,0.5)' if ui_theme == 'jellyfin' else 'rgba(229,160,13,0.5)' }}); }
   h1 {
     font-family: 'IBM Plex Mono', monospace; font-size: 18px;
     font-weight: 600; letter-spacing: 0.04em; color: var(--accent);
@@ -228,7 +231,7 @@
   #back-to-top:hover   { border-color: var(--accent); background: var(--accent-dim); }
 </style>
 </head>
-<body>
+<body data-theme="{{ ui_theme }}">
 <button id="back-to-top" title="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑ Top</button>
 
 <div class="shell">
@@ -236,8 +239,8 @@
     <a href="/" style="display:inline-flex;align-items:center;" title="Home">
       <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="28" height="28">
         <rect width="24" height="24" rx="4" fill="#0d0d0f"/>
-        <path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
-        <polyline stroke="#e5a00d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
+        <path stroke="var(--accent)" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
+        <polyline stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
       </svg>
     </a>
     <div class="header-meta">

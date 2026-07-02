@@ -145,9 +145,24 @@ def apply_path_mapping(path: str, mapping: dict, label: str, is_dir: bool = True
 # Configuration
 # ---------------------------------------------------------------------------
 
+# Media server selection — at least one must be enabled. PLEX_ENABLED defaults to
+# true so existing installs (which never set this var) keep working unchanged.
+PLEX_ENABLED     = os.getenv("PLEX_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+JELLYFIN_ENABLED = os.getenv("JELLYFIN_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
 PLEX_URL        = os.getenv("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
 PLEX_TOKEN      = os.getenv("PLEX_TOKEN", "")
 PLEX_TIMEOUT    = parse_duration(os.getenv("PLEX_TIMEOUT", "60")) or 60
+
+JELLYFIN_URL      = os.getenv("JELLYFIN_URL", "http://127.0.0.1:8096").rstrip('/')
+JELLYFIN_API_KEY  = os.getenv("JELLYFIN_API_KEY", "")
+JELLYFIN_TIMEOUT  = parse_duration(os.getenv("JELLYFIN_TIMEOUT", "60")) or 60
+
+# UI accent theme: "plex" (amber) or "jellyfin" (purple). When only one server type
+# is enabled the theme always matches it. When both are enabled, this is just the
+# default — the user can switch via the header toggle (persisted in localStorage).
+UI_THEME        = os.getenv("UI_THEME", "").strip().lower()
+
 PORT            = int(os.getenv("PORT", "5000"))
 WEBHOOK_DELAY   = parse_duration(os.getenv("WEBHOOK_DELAY", "30"))
 MINIMUM_AGE     = parse_duration(os.getenv("MINIMUM_AGE", "0"))
@@ -189,9 +204,35 @@ plexapi.X_PLEX_PRODUCT    = PLEX_IDENTIFIER
 PATH_REPLACEMENTS        = parse_json_env("PATH_REPLACEMENTS")
 RCLONE_PATH_REPLACEMENTS = parse_json_env("RCLONE_PATH_REPLACEMENTS")
 SECTION_MAPPING          = parse_json_env("SECTION_MAPPING")
+JELLYFIN_SECTION_MAPPING = parse_json_env("JELLYFIN_SECTION_MAPPING")
+
+# Neither server type enabled — fall back to Plex so a misconfigured .env doesn't
+# silently disable all scanning.
+if not PLEX_ENABLED and not JELLYFIN_ENABLED:
+    log.warning("Neither PLEX_ENABLED nor JELLYFIN_ENABLED is true — defaulting to Plex.")
+    PLEX_ENABLED = True
+
+# Effective UI theme: explicit UI_THEME env var wins; otherwise it's implied by
+# whichever single server type is enabled; with both enabled it defaults to Plex
+# (the user can still switch in the UI).
+if UI_THEME not in ("plex", "jellyfin"):
+    UI_THEME = "jellyfin" if (JELLYFIN_ENABLED and not PLEX_ENABLED) else "plex"
+BOTH_ENABLED = PLEX_ENABLED and JELLYFIN_ENABLED
 
 # Apply secret key now that config is loaded
 app.secret_key = SECRET_KEY
+
+
+@app.context_processor
+def _inject_theme_context():
+    """Make provider/theme flags available in every template without passing
+    them explicitly at each render_template() call site."""
+    return {
+        "plex_enabled": PLEX_ENABLED,
+        "jellyfin_enabled": JELLYFIN_ENABLED,
+        "both_enabled": BOTH_ENABLED,
+        "ui_theme": UI_THEME,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -342,12 +383,13 @@ def _fetch_custom_formats_for_file(arr_type: str, file_id: int) -> list[str]:
 
 @dataclass
 class SyncTask:
-    section_id: str
     raw_path: str
     rclone_host_path: str
     age_check_path: str
     mapped_folder: str
     label: str
+    plex_section_id: Optional[str] = None
+    jellyfin_library_id: Optional[str] = None
     episode: str = ""
     quality: str = ""
     custom_formats: str = ""   # JSON-encoded list of format name strings
@@ -699,6 +741,73 @@ def invalidate_plex():
 
 
 # ---------------------------------------------------------------------------
+# Jellyfin connection
+# ---------------------------------------------------------------------------
+
+def _jellyfin_headers() -> dict:
+    return {"X-Emby-Token": JELLYFIN_API_KEY, "Content-Type": "application/json"}
+
+
+def get_jellyfin_info() -> Optional[dict]:
+    """Return Jellyfin /System/Info as a dict, or None if unreachable."""
+    if not JELLYFIN_ENABLED or not JELLYFIN_URL or not JELLYFIN_API_KEY:
+        return None
+    try:
+        r = requests.get(f"{JELLYFIN_URL}/System/Info",
+                          headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+        if r.ok:
+            return r.json()
+        log.error("Jellyfin /System/Info returned %d", r.status_code)
+    except requests.RequestException as exc:
+        log.error("Could not connect to Jellyfin: %s", exc)
+    return None
+
+
+def jellyfin_scan_path(path: str, label: str) -> None:
+    """Targeted scan: notify Jellyfin's real-time monitor that a path changed.
+
+    Jellyfin has no direct 'scan this folder' endpoint like Plex's
+    library.update(path=...). The equivalent mechanism is /Library/Media/Updated,
+    which is the same API its own file-system watcher uses internally — passing
+    a path queues an incremental (partial) library scan for that path only.
+    """
+    try:
+        r = requests.post(
+            f"{JELLYFIN_URL}/Library/Media/Updated",
+            headers=_jellyfin_headers(),
+            json={"Updates": [{"Path": path, "UpdateType": "Modified"}]},
+            timeout=JELLYFIN_TIMEOUT,
+        )
+        if not r.ok:
+            raise RuntimeError(f"Jellyfin returned {r.status_code}: {r.text[:200]}")
+        log.info("[%s] [JELLYFIN] Targeted scan requested for '%s'", label, path)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Jellyfin connection error: {exc}") from exc
+
+
+def jellyfin_full_library_scan(library_id: str) -> None:
+    """Trigger a full recursive rescan of one Jellyfin library (CollectionFolder ItemId)."""
+    r = requests.post(
+        f"{JELLYFIN_URL}/Items/{library_id}/Refresh",
+        headers=_jellyfin_headers(),
+        params={"Recursive": "true", "ImageRefreshMode": "Default", "MetadataRefreshMode": "Default"},
+        timeout=JELLYFIN_TIMEOUT,
+    )
+    r.raise_for_status()
+
+
+def jellyfin_list_libraries() -> list:
+    """Return Jellyfin libraries as [{id, title, type}, ...]."""
+    r = requests.get(f"{JELLYFIN_URL}/Library/VirtualFolders",
+                      headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+    return [
+        {"id": lib.get("ItemId", ""), "title": lib.get("Name", ""), "type": lib.get("CollectionType") or "mixed"}
+        for lib in r.json()
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
@@ -792,34 +901,51 @@ def sync_worker():
                 else:
                     log.warning("[%s] [AGE] Path not visible in container: %s", task.label, check)
 
-            # Plex scan with retry on timeout
-            plex_instance = get_plex()
-            if plex_instance:
-                for attempt in range(1, 4):
-                    try:
-                        library = plex_instance.library.sectionByID(task.section_id)
-                        log.info("[%s] [SCAN] Attempt %d/3 → %s", task.label, attempt, task.mapped_folder)
-                        library.update(path=task.mapped_folder)
+            # Scan each enabled, matched target independently — a failure on one
+            # provider doesn't prevent the other from being attempted.
+            target_errors = []
 
-                        time.sleep(20)
-                        item = _find_plex_item(plex_instance, library, task)
+            if PLEX_ENABLED and task.plex_section_id:
+                try:
+                    plex_instance = get_plex()
+                    if not plex_instance:
+                        raise RuntimeError("Plex not connected")
+                    for attempt in range(1, 4):
+                        try:
+                            library = plex_instance.library.sectionByID(task.plex_section_id)
+                            log.info("[%s] [SCAN] Attempt %d/3 → %s", task.label, attempt, task.mapped_folder)
+                            library.update(path=task.mapped_folder)
 
-                        if item:
-                            log.info("[%s] [METADATA] Found '%s', analyzing...", task.label, item.title)
-                            item.analyze()
-                        else:
-                            log.warning("[%s] [METADATA] Item not found in library DB.", task.label)
-                        break
+                            time.sleep(20)
+                            item = _find_plex_item(plex_instance, library, task)
 
-                    except Exception as exc:
-                        if "timeout" in str(exc).lower() and attempt < 3:
-                            log.warning("[%s] [PLEX] Timeout on attempt %d, retrying in 10s...", task.label, attempt)
-                            # Reconnect in case the connection went stale
-                            invalidate_plex()
-                            plex_instance = get_plex()
-                            time.sleep(10)
-                        else:
-                            raise
+                            if item:
+                                log.info("[%s] [METADATA] Found '%s', analyzing...", task.label, item.title)
+                                item.analyze()
+                            else:
+                                log.warning("[%s] [METADATA] Item not found in library DB.", task.label)
+                            break
+
+                        except Exception as exc:
+                            if "timeout" in str(exc).lower() and attempt < 3:
+                                log.warning("[%s] [PLEX] Timeout on attempt %d, retrying in 10s...", task.label, attempt)
+                                # Reconnect in case the connection went stale
+                                invalidate_plex()
+                                plex_instance = get_plex()
+                                time.sleep(10)
+                            else:
+                                raise
+                except Exception as exc:
+                    target_errors.append(f"Plex: {exc}")
+
+            if JELLYFIN_ENABLED and task.jellyfin_library_id:
+                try:
+                    jellyfin_scan_path(task.mapped_folder, task.label)
+                except Exception as exc:
+                    target_errors.append(f"Jellyfin: {exc}")
+
+            if target_errors:
+                raise RuntimeError("; ".join(target_errors))
 
         except Exception as exc:
             status = "error"
@@ -912,7 +1038,7 @@ def _find_plex_item(plex_instance, library, task: SyncTask):
         log.info("[%s] [METADATA] Lookup %d/6 for '%s'", task.label, i + 1, clean_title)
         try:
             encoded = urllib.parse.quote(search_path)
-            xml = plex_instance.query(f"/library/sections/{task.section_id}/all?path={encoded}")
+            xml = plex_instance.query(f"/library/sections/{task.plex_section_id}/all?path={encoded}")
             container = MediaContainer(plex_instance, xml)
             if container.metadata:
                 return container.metadata[0]
@@ -1103,19 +1229,32 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
                      if USE_RCLONE else ""
     age_check_path = mapped_folder
 
-    # Section mapping
+    # Section mapping — each enabled provider is matched independently against
+    # its own path-prefix map. A path only needs to match at least one enabled
+    # provider's mapping to be queued; matching providers are scanned, others skipped.
     comp = mapped_folder.rstrip('/').lower()
-    section_id = next(
-        (SECTION_MAPPING[p] for p in sorted(SECTION_MAPPING, key=len, reverse=True) if comp.startswith(p)),
-        None
-    )
 
-    if not section_id:
+    plex_section_id = None
+    if PLEX_ENABLED:
+        plex_section_id = next(
+            (SECTION_MAPPING[p] for p in sorted(SECTION_MAPPING, key=len, reverse=True) if comp.startswith(p)),
+            None
+        )
+
+    jellyfin_library_id = None
+    if JELLYFIN_ENABLED:
+        jellyfin_library_id = next(
+            (JELLYFIN_SECTION_MAPPING[p] for p in sorted(JELLYFIN_SECTION_MAPPING, key=len, reverse=True) if comp.startswith(p)),
+            None
+        )
+
+    if not plex_section_id and not jellyfin_library_id:
         log.warning("[%s] [SKIP] No section mapping for '%s'", label, mapped_folder)
         return {"status": "skipped", "reason": "no section mapping"}, 200
 
     task = SyncTask(
-        section_id=section_id,
+        plex_section_id=plex_section_id,
+        jellyfin_library_id=jellyfin_library_id,
         raw_path=raw_path,
         rclone_host_path=rclone_path,
         age_check_path=age_check_path,
@@ -1738,14 +1877,23 @@ def api_server_stats():
 
 @app.route('/health', methods=['GET'])
 def health():
-    plex_ok = get_plex() is not None
-    return jsonify({
-        "status": "ok" if plex_ok else "degraded",
+    plex_ok = get_plex() is not None if PLEX_ENABLED else None
+    jellyfin_ok = get_jellyfin_info() is not None if JELLYFIN_ENABLED else None
+
+    enabled_ok = [ok for ok in (plex_ok, jellyfin_ok) if ok is not None]
+    all_ok = bool(enabled_ok) and all(enabled_ok)
+
+    resp = {
+        "status": "ok" if all_ok else "degraded",
+        "plex_enabled": PLEX_ENABLED,
         "plex_connected": plex_ok,
+        "jellyfin_enabled": JELLYFIN_ENABLED,
+        "jellyfin_connected": jellyfin_ok,
         "rclone_enabled": USE_RCLONE,
         "queue_depth": sync_queue.qsize(),
         "worker_alive": _worker_alive.is_set(),
-    }), 200 if plex_ok else 207
+    }
+    return jsonify(resp), 200 if all_ok else 207
 
 
 _plex_update_cache: dict = {"ts": 0, "data": None}
@@ -2041,43 +2189,90 @@ def api_thumb():
 @csrf.exempt
 @requires_auth
 def api_scan_library():
-    """Trigger a full Plex library scan on a specific section."""
+    """Trigger a full library scan on a specific Plex section or Jellyfin library.
+
+    section_id is provider-prefixed (e.g. "plex:1" or "jellyfin:<itemId>") so a
+    single dropdown can offer libraries from either/both enabled servers.
+    """
     data = request.get_json(silent=True) or {}
-    section_id = str(data.get('section_id', '')).strip()
-    if not section_id:
+    raw_id = str(data.get('section_id', '')).strip()
+    if not raw_id:
         return jsonify({'error': 'section_id required'}), 400
-    plex_instance = get_plex()
-    if not plex_instance:
-        return jsonify({'error': 'Plex not connected'}), 503
-    try:
-        library = plex_instance.library.sectionByID(int(section_id))
-        library.update()
-        log.info("[MANUAL] Full scan triggered for library '%s' (section %s)", library.title, section_id)
-        return jsonify({'status': 'ok', 'library': library.title})
-    except Exception as exc:
-        log.error("[MANUAL] Full scan error for section %s: %s", section_id, exc)
-        return jsonify({'error': 'Failed to trigger full scan'}), 500
+
+    provider, _, section_id = raw_id.partition(':')
+    if not section_id:
+        # Back-compat: bare IDs (no prefix) are treated as Plex, matching old clients
+        provider, section_id = 'plex', raw_id
+
+    if provider == 'plex':
+        if not PLEX_ENABLED:
+            return jsonify({'error': 'Plex is not enabled'}), 400
+        plex_instance = get_plex()
+        if not plex_instance:
+            return jsonify({'error': 'Plex not connected'}), 503
+        try:
+            library = plex_instance.library.sectionByID(int(section_id))
+            library.update()
+            log.info("[MANUAL] Full scan triggered for Plex library '%s' (section %s)", library.title, section_id)
+            return jsonify({'status': 'ok', 'library': library.title})
+        except Exception as exc:
+            log.error("[MANUAL] Full scan error for Plex section %s: %s", section_id, exc)
+            return jsonify({'error': 'Failed to trigger full scan'}), 500
+
+    elif provider == 'jellyfin':
+        if not JELLYFIN_ENABLED:
+            return jsonify({'error': 'Jellyfin is not enabled'}), 400
+        try:
+            jellyfin_full_library_scan(section_id)
+            log.info("[MANUAL] Full scan triggered for Jellyfin library %s", section_id)
+            return jsonify({'status': 'ok', 'library': section_id})
+        except Exception as exc:
+            log.error("[MANUAL] Full scan error for Jellyfin library %s: %s", section_id, exc)
+            return jsonify({'error': 'Failed to trigger full scan'}), 500
+
+    return jsonify({'error': 'Unknown provider'}), 400
 
 
 @app.route('/api/libraries')
 @requires_auth
 def api_libraries():
-    """Return the list of Plex library sections."""
+    """Return the combined list of Plex sections and/or Jellyfin libraries.
+
+    Each entry's id is provider-prefixed ("plex:<id>" / "jellyfin:<id>") so
+    /api/scan/library can route the scan request to the right server.
+    """
     if session.get('demo'):
         return jsonify({'libraries': [
-            {'id': '1', 'title': 'TV Shows', 'type': 'show'},
-            {'id': '2', 'title': 'Movies', 'type': 'movie'},
+            {'id': 'plex:1', 'title': 'TV Shows', 'type': 'show', 'provider': 'plex'},
+            {'id': 'plex:2', 'title': 'Movies', 'type': 'movie', 'provider': 'plex'},
         ]})
-    plex_instance = get_plex()
-    if not plex_instance:
-        return jsonify({'error': 'Plex not connected', 'libraries': []}), 503
-    try:
-        libs = [{'id': str(s.key), 'title': s.title, 'type': s.type}
-                for s in plex_instance.library.sections()]
-        return jsonify({'libraries': libs})
-    except Exception as exc:
-        log.error("[LIBRARIES] Failed to fetch Plex library sections: %s", exc)
-        return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 500
+
+    libs = []
+    errors = []
+
+    if PLEX_ENABLED:
+        plex_instance = get_plex()
+        if plex_instance:
+            try:
+                libs.extend({'id': f'plex:{s.key}', 'title': s.title, 'type': s.type, 'provider': 'plex'}
+                            for s in plex_instance.library.sections())
+            except Exception as exc:
+                log.error("[LIBRARIES] Failed to fetch Plex library sections: %s", exc)
+                errors.append('plex')
+        else:
+            errors.append('plex')
+
+    if JELLYFIN_ENABLED:
+        try:
+            libs.extend({'id': f"jellyfin:{lib['id']}", 'title': lib['title'], 'type': lib['type'], 'provider': 'jellyfin'}
+                        for lib in jellyfin_list_libraries())
+        except Exception as exc:
+            log.error("[LIBRARIES] Failed to fetch Jellyfin libraries: %s", exc)
+            errors.append('jellyfin')
+
+    if not libs and errors:
+        return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 503
+    return jsonify({'libraries': libs})
 
 
 _TILE_CACHE_DIR = "/data/tile_cache"
@@ -2222,6 +2417,10 @@ def _plex_section_names(plex_instance, section_ids: list) -> list[str]:
 @app.route('/invites', methods=['GET'])
 @requires_auth
 def invites_page():
+    if not PLEX_ENABLED:
+        # Invite management uses the Plex friends/shared-libraries API and has no
+        # Jellyfin equivalent implemented yet — not reachable when Plex is disabled.
+        return redirect(url_for('manual_webhook'))
     if session.get('demo'):
         return render_template('invites.html', invites=_DEMO_INVITES,
                                libraries=[{"id": "1", "title": "TV Shows", "type": "show"},
