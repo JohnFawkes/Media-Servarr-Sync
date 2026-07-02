@@ -74,7 +74,7 @@ templates/
 |---|---|---|---|
 | `/webhook/sonarr` | POST | none (CSRF exempt) | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | none (CSRF exempt) | Radarr webhook receiver |
-| `/` | GET/POST | session | Sync tab — manual scan UI, history, Full Library Scan, and (Plex only) Now Playing / Server Stats |
+| `/` | GET/POST | session | Sync tab — manual scan UI, history, Full Library Scan, Now Playing (Plex and/or Jellyfin), and (Plex only) Server Stats |
 | `/invites` | GET | session | Invite management tab *(Plex only; redirects to `/` when `PLEX_ENABLED=false`)* |
 | `/invites/create` | POST | session | Create a new invite link |
 | `/invites/revoke/<token>` | POST | session | Revoke an invite link |
@@ -85,7 +85,7 @@ templates/
 | `/logout` | GET | session | Logout |
 | `/health` | GET | none | Health check (Plex + Jellyfin connectivity, rclone, queue depth) |
 | `/api/stats` | GET | none | Aggregate stats (Homepage widget) |
-| `/api/sessions` | GET | session | Raw Plex session data for Now Playing *(Plex only)* |
+| `/api/sessions` | GET | session | Combined Plex and/or Jellyfin session data for Now Playing |
 | `/api/scan/library` | POST | session (CSRF exempt) | Trigger a full scan of one Plex section or Jellyfin library (provider-prefixed id, e.g. `plex:1` / `jellyfin:<itemId>`) |
 | `/api/libraries` | GET | session | List Plex sections and/or Jellyfin libraries, provider-prefixed |
 | `/api/geoip` | GET | session | Server-side IP geolocation proxy (cached) |

@@ -12,9 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Jellyfin theme** — the UI accent switches from Plex amber to Jellyfin purple automatically when only Jellyfin is enabled (`UI_THEME` env var can also force it explicitly). When both servers are enabled, a toggle appears in the Sync tab header to switch the accent per-browser (saved in `localStorage`).
 - **Multi-provider Full Library Scan** — the Sync tab's library dropdown now lists Plex sections and/or Jellyfin libraries (via `/api/libraries`), labelled by provider when both are enabled; `/api/scan/library` routes the scan request to the matching server.
 - **Jellyfin-aware health check** — `/health` now reports `plex_enabled`/`plex_connected` and `jellyfin_enabled`/`jellyfin_connected` independently; overall `status` is `"ok"` only when every enabled server is reachable.
+- **Jellyfin Now Playing** — active Jellyfin sessions (via `/Sessions`) now appear in the Now Playing card alongside Plex sessions, normalized to the same layout: artwork (proxied through Jellyfin's Images API), progress bar, stream quality (Direct Play / Direct Stream / Transcode), and an "Open in Jellyfin" deep link. When both servers are enabled, sessions from each appear together in one list.
 
 ### Changed
-- **Now Playing, Server Stats, and Invites are Plex-only** — these features have no Jellyfin equivalent implemented yet, so their cards/nav links/routes are hidden and skipped entirely when `PLEX_ENABLED=false`.
+- **Server Stats and Invites are Plex-only** — these features have no Jellyfin equivalent implemented yet, so their cards/nav links/routes are hidden and skipped entirely when `PLEX_ENABLED=false`. Now Playing, by contrast, supports both servers.
 
 ## [v0.23.0] - 2026-07-01
 

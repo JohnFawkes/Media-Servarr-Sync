@@ -807,6 +807,95 @@ def jellyfin_list_libraries() -> list:
     ]
 
 
+def jellyfin_sessions() -> list:
+    """Return active Jellyfin playback sessions, normalized to the same shape
+    used for Plex sessions by /api/sessions (see api_sessions()).
+
+    thumb_key is prefixed "jellyfin:<itemId>" so /api/thumb can tell it apart
+    from a Plex library key and proxy it through Jellyfin's Images API instead.
+    """
+    r = requests.get(f"{JELLYFIN_URL}/Sessions", headers=_jellyfin_headers(), timeout=JELLYFIN_TIMEOUT)
+    r.raise_for_status()
+
+    result = []
+    for s in r.json():
+        item = s.get('NowPlayingItem')
+        if not item:
+            continue  # session exists but nothing is actively playing
+
+        play_state = s.get('PlayState', {}) or {}
+        transcode = s.get('TranscodingInfo')
+
+        media_type = 'episode' if item.get('Type') == 'Episode' else \
+                     'movie' if item.get('Type') == 'Movie' else (item.get('Type') or 'unknown').lower()
+
+        season_ep = None
+        if media_type == 'episode':
+            season = item.get('ParentIndexNumber')
+            episode = item.get('IndexNumber')
+            if season is not None and episode is not None:
+                season_ep = f"S{int(season):02d}E{int(episode):02d}"
+
+        position = play_state.get('PositionTicks', 0) or 0
+        runtime = item.get('RunTimeTicks', 0) or 0
+        progress_pct = round((position / runtime * 100), 1) if runtime > 0 else 0
+
+        if transcode:
+            video_direct = transcode.get('IsVideoDirect', False)
+            audio_direct = transcode.get('AudioDirect', transcode.get('IsAudioDirect', False))
+            video_label = 'Direct Stream' if video_direct else 'Transcode'
+            audio_label = 'Direct Stream' if audio_direct else 'Transcode'
+            stream_type = video_label if video_label == audio_label else f"{video_label} · Audio {audio_label}"
+        else:
+            play_method = play_state.get('PlayMethod', 'DirectPlay')
+            stream_type = {'DirectPlay': 'Direct Play', 'DirectStream': 'Direct Stream',
+                           'Transcode': 'Transcode'}.get(play_method, play_method)
+
+        video_resolution = None
+        bitrate_kbps = None
+        streams = item.get('MediaStreams', [])
+        for ms in streams:
+            if ms.get('Type') == 'Video':
+                h = ms.get('Height')
+                if h:
+                    video_resolution = f"{h}p"
+                if ms.get('BitRate'):
+                    bitrate_kbps = round(ms['BitRate'] / 1000)
+                break
+        if not bitrate_kbps and transcode and transcode.get('Bitrate'):
+            bitrate_kbps = round(transcode['Bitrate'] / 1000)
+
+        thumb_item_id = (item.get('SeriesId') if media_type == 'episode' and item.get('SeriesId')
+                         else item.get('Id'))
+
+        result.append({
+            'session_id':       str(s.get('Id', '')),
+            'rating_key':       str(item.get('Id', '')),
+            'plex_item_key':    '',
+            'session_source':   'jellyfin',
+            'type':             media_type,
+            'title':            item.get('Name', ''),
+            'year':             item.get('ProductionYear'),
+            'show_title':       item.get('SeriesName'),
+            'season_episode':   season_ep,
+            'thumb_key':        f"jellyfin:{thumb_item_id}" if thumb_item_id else None,
+            'progress_pct':     progress_pct,
+            'view_offset_ms':   round(position / 10000) if position else 0,
+            'duration_ms':      round(runtime / 10000) if runtime else 0,
+            'state':            'paused' if play_state.get('IsPaused') else 'playing',
+            'stream_type':      stream_type,
+            'video_resolution': video_resolution,
+            'bitrate_kbps':     bitrate_kbps,
+            'user':             s.get('UserName', 'Unknown'),
+            'player_device':    s.get('DeviceName', ''),
+            'player_platform':  s.get('Client', ''),
+            'player_product':   s.get('ApplicationVersion', ''),
+            'player_address':   s.get('RemoteEndPoint', ''),
+            'player_remote_address': s.get('RemoteEndPoint', ''),
+        })
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -1606,7 +1695,9 @@ def _demo_history() -> list:
         {
             "ts": (now - timedelta(hours=4, minutes=17)).strftime("%Y-%m-%dT%H:%M:%S"),
             "label": "RADARR", "status": "error",
-            "error": "ReadTimeout: Plex did not respond within 60s",
+            "error": ("ReadTimeout: Jellyfin did not respond within 60s"
+                      if (JELLYFIN_ENABLED and not PLEX_ENABLED)
+                      else "ReadTimeout: Plex did not respond within 60s"),
             "duration_s": 60.0,
             "path": "/media/movies/Avatar The Way of Water (2022)/",
             "episode": "", "quality": "Bluray-2160p",
@@ -1785,6 +1876,7 @@ def manual_webhook():
         no_quality_qs=no_quality_qs,
         no_profile_qs=no_profile_qs,
         plex_url=PLEX_URL,
+        jellyfin_url=JELLYFIN_URL,
         demo=session.get('demo', False),
     )
 
@@ -1990,13 +2082,17 @@ def api_stats():
 @app.route('/api/sessions', methods=['GET'])
 @requires_auth
 def api_sessions():
-    """Return current Plex sessions for the Now Playing dashboard."""
+    """Return current Plex and/or Jellyfin sessions for the Now Playing dashboard."""
     if session.get('demo'):
+        # Demo player labels/session_source reflect whichever provider(s) are
+        # actually enabled, so Jellyfin-only screenshots don't show "Plex for ..."
+        demo_source = 'jellyfin' if (JELLYFIN_ENABLED and not PLEX_ENABLED) else 'plex'
         demo_result = []
         for s in _DEMO_SESSIONS:
+            player_label = s['player'].replace('Plex', 'Jellyfin') if demo_source == 'jellyfin' else s['player']
             demo_result.append({
                 'session_id': f"demo-{s['user']}",
-                'rating_key': '', 'plex_item_key': '', 'type': s['type'],
+                'rating_key': '', 'plex_item_key': '', 'session_source': demo_source, 'type': s['type'],
                 'title': s['title'], 'year': None,
                 'show_title': s.get('show'), 'season_episode': s.get('episode'),
                 'thumb_key': s.get('thumb_key'),
@@ -2006,16 +2102,39 @@ def api_sessions():
                 'video_resolution': s['quality'].replace('p','') if s['quality'].endswith('p') else s['quality'],
                 'bitrate_kbps': None,
                 'user': s['user'],
-                'player_device': s['player'], 'player_platform': '', 'player_product': '',
+                'player_device': player_label, 'player_platform': '', 'player_product': '',
                 'player_address': s.get('player_address', ''), 'player_remote_address': s.get('player_remote_address', ''),
             })
-        return jsonify({'sessions': demo_result, 'machine_id': ''})
+        return jsonify({'sessions': demo_result, 'machine_id': '', 'jellyfin_server_id': 'demo-jellyfin-server'})
+
+    result = []
+    errors = []
+    machine_id = ''
+    jellyfin_server_id = ''
+
+    if JELLYFIN_ENABLED:
+        try:
+            result.extend(jellyfin_sessions())
+            jf_info = get_jellyfin_info()
+            if jf_info:
+                jellyfin_server_id = jf_info.get('Id', '')
+        except Exception as exc:
+            log.error("Error fetching Jellyfin sessions: %s", exc)
+            errors.append('jellyfin')
+
+    if not PLEX_ENABLED:
+        if errors and not result:
+            return jsonify({'error': 'Failed to retrieve sessions.', 'sessions': []}), 500
+        return jsonify({'sessions': result, 'machine_id': machine_id, 'jellyfin_server_id': jellyfin_server_id})
+
     plex_instance = get_plex()
     if not plex_instance:
+        if result:
+            # Jellyfin sessions are still valid even though Plex is down
+            return jsonify({'sessions': result, 'machine_id': machine_id, 'jellyfin_server_id': jellyfin_server_id})
         return jsonify({"error": "Plex not connected", "sessions": []}), 503
     try:
         sessions_data = plex_instance.sessions()
-        result = []
         machine_id = getattr(plex_instance, 'machineIdentifier', '')
         for s in sessions_data:
             players = getattr(s, 'players', [])
@@ -2077,6 +2196,7 @@ def api_sessions():
                 'session_id':       str(getattr(s, 'sessionKey', id(s))),
                 'rating_key':       str(getattr(s, 'ratingKey', '')),
                 'plex_item_key':    getattr(s, 'key', ''),
+                'session_source':   'plex',
                 'type':             media_type,
                 'title':            getattr(s, 'title', ''),
                 'year':             getattr(s, 'year', None),
@@ -2099,16 +2219,53 @@ def api_sessions():
                 'player_address':   player_address,
                 'player_remote_address': player_remote,
             })
-        return jsonify({'sessions': result, 'machine_id': machine_id})
+        return jsonify({'sessions': result, 'machine_id': machine_id, 'jellyfin_server_id': jellyfin_server_id})
     except Exception as exc:
-        log.error("Error fetching sessions: %s", exc)
+        log.error("Error fetching Plex sessions: %s", exc)
+        if result:
+            # Jellyfin sessions gathered above are still valid even though Plex failed
+            return jsonify({'sessions': result, 'machine_id': machine_id, 'jellyfin_server_id': jellyfin_server_id})
         return jsonify({'error': 'Failed to retrieve sessions.', 'sessions': []}), 500
+
+
+_JELLYFIN_ITEM_ID_RE = re.compile(r'^[a-fA-F0-9]{32}$')
+
+
+def _proxy_jellyfin_thumb(item_id: str, width: int, height: int):
+    """Proxy a Jellyfin item's primary image. Shares the response validation
+    (content-type whitelist + magic-byte check) used for the Plex path."""
+    if not _JELLYFIN_ITEM_ID_RE.fullmatch(item_id):
+        return '', 403
+    try:
+        resp = requests.get(
+            f"{JELLYFIN_URL}/Items/{item_id}/Images/Primary",
+            params={'maxWidth': width, 'maxHeight': height, 'quality': 90},
+            headers=_jellyfin_headers(),
+            timeout=10,
+        )
+        if not resp.ok:
+            return '', 404
+        _SAFE_CT = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff'}
+        raw_ct = resp.headers.get('Content-Type', '').split(';')[0].strip()
+        ct = raw_ct if raw_ct in _SAFE_CT else 'image/jpeg'
+        body = resp.content
+        _IMAGE_MAGIC = (b'\xff\xd8\xff', b'\x89PNG\r\n', b'GIF8', b'RIFF', b'BM')
+        if not any(body.startswith(magic) for magic in _IMAGE_MAGIC):
+            return '', 502
+        response = make_response(body)
+        response.content_type = ct
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        return response
+    except requests.RequestException as exc:
+        log.error("Jellyfin thumb proxy error: %s", exc)
+        return '', 502
 
 
 @app.route('/api/thumb')
 @requires_auth
 def api_thumb():
-    """Proxy Plex thumbnails so the token never appears in the browser."""
+    """Proxy Plex/Jellyfin thumbnails so tokens never appear in the browser."""
     key = request.args.get('key', '').strip()
     if not key:
         return '', 404
@@ -2123,16 +2280,20 @@ def api_thumb():
         except Exception:
             pass
         return '', 502
-    if not (key.startswith('/library/') or key.startswith('/photo/')):
-        return '', 403
-    # Restrict to safe path characters only — prevents injection via crafted keys.
-    if not re.fullmatch(r'[/\w.\-]+', key):
-        return '', 403
     try:
         width  = max(1, min(int(request.args.get('w', '80')),  2000))
         height = max(1, min(int(request.args.get('h', '120')), 2000))
     except (ValueError, TypeError):
         return '', 400
+    if key.startswith('jellyfin:'):
+        if not JELLYFIN_ENABLED:
+            return '', 403
+        return _proxy_jellyfin_thumb(key[len('jellyfin:'):], width, height)
+    if not (key.startswith('/library/') or key.startswith('/photo/')):
+        return '', 403
+    # Restrict to safe path characters only — prevents injection via crafted keys.
+    if not re.fullmatch(r'[/\w.\-]+', key):
+        return '', 403
     try:
         resp = requests.get(
             PLEX_URL.rstrip('/') + '/photo/:/transcode',
@@ -2242,10 +2403,18 @@ def api_libraries():
     /api/scan/library can route the scan request to the right server.
     """
     if session.get('demo'):
-        return jsonify({'libraries': [
-            {'id': 'plex:1', 'title': 'TV Shows', 'type': 'show', 'provider': 'plex'},
-            {'id': 'plex:2', 'title': 'Movies', 'type': 'movie', 'provider': 'plex'},
-        ]})
+        demo_libs = []
+        if PLEX_ENABLED:
+            demo_libs += [
+                {'id': 'plex:1', 'title': 'TV Shows', 'type': 'show', 'provider': 'plex'},
+                {'id': 'plex:2', 'title': 'Movies', 'type': 'movie', 'provider': 'plex'},
+            ]
+        if JELLYFIN_ENABLED:
+            demo_libs += [
+                {'id': 'jellyfin:1', 'title': 'TV Shows', 'type': 'tvshows', 'provider': 'jellyfin'},
+                {'id': 'jellyfin:2', 'title': 'Movies', 'type': 'movies', 'provider': 'jellyfin'},
+            ]
+        return jsonify({'libraries': demo_libs})
 
     libs = []
     errors = []

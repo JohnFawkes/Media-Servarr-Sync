@@ -894,7 +894,7 @@
   </div>
   {% endif %}
 
-  {% if plex_enabled %}
+  {% if plex_enabled or jellyfin_enabled %}
   <div class="card" id="now-playing-card">
     <div class="card-label" style="display:flex;align-items:center;gap:6px;">
       Now Playing
@@ -909,7 +909,9 @@
       <div class="np-empty">Loading…</div>
     </div>
   </div>
+  {% endif %}
 
+  {% if plex_enabled %}
   <div class="card" id="server-stats-card">
     <div class="card-label" style="display:flex;align-items:center;gap:6px;">
       Server Stats
@@ -1476,12 +1478,18 @@
     if (!str) return '';
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
   }
-  function buildSessionHtml(s, safeId, machineId, pct, rem, sClass, sLbl, qualParts) {
-    var plexUrl = (machineId && s.rating_key)
-      ? '{{ plex_url }}/web/index.html#!/server/'+machineId+'/details?key='+encodeURIComponent(s.plex_item_key||'/library/metadata/'+s.rating_key) : '';
-    var sPlex = escHtml(plexUrl);
+  function buildSessionHtml(s, safeId, machineId, jellyfinServerId, pct, rem, sClass, sLbl, qualParts) {
+    var isJellyfin = s.session_source === 'jellyfin';
+    var deepUrl = '';
+    if (isJellyfin && jellyfinServerId && s.rating_key) {
+      deepUrl = '{{ jellyfin_url }}/web/index.html#!/details?id='+encodeURIComponent(s.rating_key)+'&serverId='+encodeURIComponent(jellyfinServerId);
+    } else if (!isJellyfin && machineId && s.rating_key) {
+      deepUrl = '{{ plex_url }}/web/index.html#!/server/'+machineId+'/details?key='+encodeURIComponent(s.plex_item_key||'/library/metadata/'+s.rating_key);
+    }
+    var sLink = escHtml(deepUrl);
+    var linkLabel = isJellyfin ? '↗ Jellyfin' : '↗ Plex';
     var poster = s.thumb_key
-      ? '<a href="'+(sPlex||'#')+'" target="_blank" rel="noopener"><img class="np-poster" src="'+escHtml('/api/thumb?key='+encodeURIComponent(s.thumb_key)+'&w=72&h=108')+'" alt="poster" loading="lazy"></a>'
+      ? '<a href="'+(sLink||'#')+'" target="_blank" rel="noopener"><img class="np-poster" src="'+escHtml('/api/thumb?key='+encodeURIComponent(s.thumb_key)+'&w=72&h=108')+'" alt="poster" loading="lazy"></a>'
       : '<div class="np-poster-ph">?</div>';
     var yr = parseInt(s.year,10)||0;
     var title = s.type==='episode'
@@ -1495,7 +1503,7 @@
       +'<div class="np-title-row"><div class="np-titles">'+title+'</div><span class="np-state '+sClass+'">'+sLbl+'</span></div>'
       +'<div class="np-user"><span class="np-username">'+escHtml(s.user)+'</span>'
       +(player.length?'<span class="np-sep">·</span><span>'+escHtml(player.join(' · '))+'</span>':'')
-      +(sPlex?'<a href="'+sPlex+'" target="_blank" rel="noopener" class="np-plex-link" title="Open in Plex">↗ Plex</a>':'')+'</div>'
+      +(sLink?'<a href="'+sLink+'" target="_blank" rel="noopener" class="np-plex-link" title="Open">'+linkLabel+'</a>':'')+'</div>'
       +'<div class="np-progress-row"><div class="np-progress-bar"><div class="np-progress-fill" style="width:'+pct+'%"></div></div>'
       +'<span class="np-pct">'+pct.toFixed(0)+'%</span>'+(rem?'<span class="np-remaining">'+rem+' left</span>':'')+'</div>'
       +(qualParts.length?'<div class="np-quality">'+escHtml(qualParts.join(' · '))+'</div>':'')
@@ -1509,6 +1517,7 @@
     var countEl = document.getElementById('stream-count');
     if (!container) return;
     var sessions = data.sessions || [], machineId = data.machine_id || '';
+    var jellyfinServerId = data.jellyfin_server_id || '';
     if (countEl) countEl.textContent = '(' + sessions.length + ' stream' + (sessions.length !== 1 ? 's' : '') + ')';
 
     if (!npRendered) {
@@ -1523,7 +1532,7 @@
         var rem = fmtMs((s.duration_ms||0)-(s.view_offset_ms||0));
         var sClass = stateClass(s.state), sLbl = stateLabel(s.state);
         var qual = [s.stream_type, s.video_resolution?s.video_resolution.toUpperCase():'', s.bitrate_kbps?(s.bitrate_kbps/1000).toFixed(1)+' Mbps':''].filter(Boolean);
-        return buildSessionHtml(s, safeId, machineId, pct, rem, sClass, sLbl, qual);
+        return buildSessionHtml(s, safeId, machineId, jellyfinServerId, pct, rem, sClass, sLbl, qual);
       }).join('');
       sessions.forEach(function(s) {
         var ip = s.player_remote_address || s.player_address || '';
@@ -1572,7 +1581,7 @@
         if (qualEl) qualEl.textContent = qual.join(' · ');
       } else {
         var tmp = document.createElement('div');
-        tmp.innerHTML = buildSessionHtml(s, safeId, machineId, pct, rem, sClass, sLbl, qual);
+        tmp.innerHTML = buildSessionHtml(s, safeId, machineId, jellyfinServerId, pct, rem, sClass, sLbl, qual);
         container.appendChild(tmp.firstChild);
         var ip = s.player_remote_address || s.player_address || '';
         if (ip) initGeo(safeId, ip);

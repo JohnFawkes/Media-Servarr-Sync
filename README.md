@@ -43,8 +43,8 @@ Plex and Jellyfin support are each independently toggled with `PLEX_ENABLED` / `
 - **Filterable tags** — click any quality or profile tag to filter the history list to matching entries; active filters appear as dismissible pills in the filter bar and are preserved across search and pagination
 - **Tag colour legend** — a horizontal fixed panel to the left of the Sync UI explains what each tag colour means; visible on wide viewports where there's room beside the main column, hidden on narrow screens
 - **Configurable auto-refresh** — set the refresh interval for Now Playing and Sync history independently via a number input on each card; `0` = live (1-second polling), `-1` = off, any positive integer = interval in seconds with a live countdown. Preference persists in `localStorage` across page loads and tab switches
-- **Now Playing** *(Plex only)* — active Plex streams shown directly on the Sync tab: player info, artwork, progress bar, stream quality (including **HW Transcode** detection), and an interactive map of the player's approximate location. On wide viewports the card pins as a fixed left sidebar below the tag legend
-- **Server stats** *(Plex only)* — live CPU % and RAM % sparkline charts (System vs Plex process) and current LAN/WAN bandwidth, shown directly on the Sync tab. Powered by the Plex `/statistics/resources` and `/statistics/bandwidth` APIs; polled every 30 s with no external CDN. On wide viewports the card pins as a fixed right sidebar
+- **Now Playing** — active streams from Plex and/or Jellyfin (whichever are enabled) shown directly on the Sync tab: player info, artwork, progress bar, stream quality (including **HW Transcode** detection), and an interactive map of the player's approximate location. Sessions from both servers appear in the same list when both are enabled. On wide viewports the card pins as a fixed left sidebar below the tag legend
+- **Server stats** *(Plex only)* — live CPU % and RAM % sparkline charts (System vs Plex process) and current LAN/WAN bandwidth, shown directly on the Sync tab. Powered by the Plex `/statistics/resources` and `/statistics/bandwidth` APIs; polled every 30 s with no external CDN. On wide viewports the card pins as a fixed right sidebar. No Jellyfin equivalent yet
 - **Full library scan** — trigger a full scan of any Plex section or Jellyfin library directly from the Sync tab via a library selector dropdown; when both servers are enabled each entry is labelled by provider
 - **Invite management** *(Plex only)* — create time-limited invite links for new Plex users; configure allowed libraries, permissions, max uses, and expiry; track and revoke accepted invites
 - **Single-page navigation** — tab switching uses PJAX (in-place content swap) with no full page reload
@@ -62,6 +62,9 @@ Plex and Jellyfin support are each independently toggled with `PLEX_ENABLED` / `
 
 * **Dashboard (Wide — with sidebars)**
 ![Dashboard wide desktop with sidebars](screenshots/dashboard_wide.png)
+
+* **Dashboard (Jellyfin theme)**
+![Jellyfin-themed dashboard](screenshots/jellyfin_dashboard.png)
 
 * **Invite Management**
 ![Invites](screenshots/invites.png)
@@ -117,6 +120,10 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `SECTION_MAPPING` | if Plex | `{}` | JSON map of path prefixes → Plex library section IDs |
 | `JELLYFIN_SECTION_MAPPING` | if Jellyfin | `{}` | JSON map of path prefixes → Jellyfin library ItemIds |
 | `PATH_REPLACEMENTS` | | `{}` | JSON map: Sonarr/Radarr path prefix → path as seen inside this container |
+| `SONARR_URL` | no | — | Sonarr base URL, e.g. `http://sonarr:8989`. Enables quality profile and custom format lookups for Sonarr sync history entries |
+| `SONARR_API_KEY` | no | — | Sonarr API key (Settings → General → Security). Required alongside `SONARR_URL` |
+| `RADARR_URL` | no | — | Radarr base URL, e.g. `http://radarr:7878`. Enables quality profile and custom format lookups for Radarr sync history entries |
+| `RADARR_API_KEY` | no | — | Radarr API key (Settings → General → Security). Required alongside `RADARR_URL` |
 | `MANUAL_USER` | | `admin` | Username for the manual trigger UI |
 | `MANUAL_PASS` | | `changeme` | Password for the manual trigger UI |
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
@@ -211,11 +218,12 @@ When both Plex and Jellyfin are enabled, a path is scanned on every server whose
 |---|---|---|---|
 | `/webhook/sonarr` | POST | None | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | None | Radarr webhook receiver |
-| `/` | GET / POST | Session | Sync tab — manual trigger, history, Full Library Scan, and (Plex only) Now Playing / Server Stats |
+| `/` | GET / POST | Session | Sync tab — manual trigger, history, Full Library Scan, Now Playing (Plex and/or Jellyfin), and (Plex only) Server Stats |
 | `/invites` | GET | Session | Invite management tab *(Plex only)* |
 | `/invite/<token>` | GET | None | Public invite landing page |
 | `/health` | GET | None | JSON health check |
 | `/api/stats` | GET | None | Aggregate sync stats for dashboards |
+| `/api/sessions` | GET | Session | Combined active-session data (Plex and/or Jellyfin) for Now Playing |
 | `/api/server-stats` | GET | Session | Plex server CPU, RAM, and bandwidth stats *(Plex only)* |
 | `/api/libraries` | GET | Session | Combined list of Plex sections and/or Jellyfin libraries |
 | `/api/scan/library` | POST | Session | Trigger a full scan of one Plex section or Jellyfin library |
