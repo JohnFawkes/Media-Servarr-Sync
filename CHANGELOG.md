@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Webhook events silently dropped during bursty imports** — when a batch of episodes for the same show folder arrived within the `SYNC_COOLDOWN` window following a just-completed scan, those follow-up webhook events were dropped outright instead of triggering a scan, so newly imported episodes could go unscanned in Plex until a manual full library scan days later. Events arriving during cooldown are now deferred and automatically queued (merging episode/quality info, same as in-flight dedup) once the cooldown expires, instead of being discarded. `/api/stats` now also reports a `queue.deferred` count.
+
 ## [v0.23.2] - 2026-07-06
 
 ### Fixed
