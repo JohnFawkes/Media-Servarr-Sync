@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **Episode tooltip clipping on mobile** — the episode-count badge's hover/tap tooltip was anchored to the right edge of the badge, which regularly pushed it off the left edge of the screen on narrow viewports since the badge can sit anywhere along the history row. On screens ≤600px wide, the tooltip now centers on the viewport (fixed position, capped at 92vw/80vh with scrolling for long lists) instead of anchoring to the badge, so it's never clipped regardless of where the badge is.
+- **Webhook events silently dropped during bursty imports** — when a batch of episodes for the same show folder arrived within the `SYNC_COOLDOWN` window following a just-completed scan, those follow-up webhook events were dropped outright instead of triggering a scan, so newly imported episodes could go unscanned in Plex until a manual full library scan days later. Events arriving during cooldown are now deferred and automatically queued (merging episode/quality info, same as in-flight dedup) once the cooldown expires, instead of being discarded. `/api/stats` now also reports a `queue.deferred` count.
 
 ## [v0.23.1] - 2026-07-02
 
