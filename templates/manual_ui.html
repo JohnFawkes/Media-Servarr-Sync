@@ -195,6 +195,21 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   }
   .ep-wrap:hover .ep-tooltip { display: block; }
+  /* On narrow viewports the badge can sit anywhere along the row (including
+     close to the left edge), so a right-anchored — or even badge-centered —
+     tooltip regularly clips off-screen since its width can exceed the space
+     on either side of the badge. Center it on the viewport instead, fixed
+     in place, so it's never clipped regardless of where the badge sits. */
+  @media (max-width: 600px) {
+    .ep-tooltip {
+      position: fixed;
+      left: 50%; top: 50%; right: auto;
+      transform: translate(-50%, -50%);
+      width: 92vw; max-width: 92vw;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+  }
   .ep-tip-row {
     font-size: 10px; color: var(--text);
     padding: 3px 0; border-bottom: 1px solid var(--border);
