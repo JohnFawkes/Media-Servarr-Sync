@@ -658,6 +658,7 @@ invite_db = InviteDB(db_path="/data/invites.db")
 sync_queue: queue.Queue = queue.Queue()
 _in_flight: dict = {}           # mapped_folder -> SyncTask, currently queued or being processed
 _cooldown: dict = {}            # mapped_folder -> expiry monotonic timestamp, recently completed
+_cooldown_pending: dict = {}    # mapped_folder -> SyncTask, arrived during cooldown, deferred until it expires
 _in_flight_lock = threading.Lock()
 
 
@@ -1099,6 +1100,19 @@ def _merge_custom_formats(existing: str, incoming: str) -> str:
     return json.dumps(merged) if merged else ""
 
 
+def _flush_cooldown_pending(mapped_folder: str):
+    """Queue a task that was deferred during cooldown, once the cooldown has expired."""
+    with _in_flight_lock:
+        task = _cooldown_pending.pop(mapped_folder, None)
+        if not task or mapped_folder in _in_flight:
+            return
+        task.queued_at = time.monotonic()
+        _in_flight[mapped_folder] = task
+    sync_queue.put(task)
+    log.info("[%s] [COOLDOWN] Deferred scan now queued (depth=%d): %s",
+             task.label, sync_queue.qsize(), mapped_folder)
+
+
 def enqueue_sync(raw_path: str, label: str, episode: str = "",
                  quality: str = "", custom_formats: str = "", quality_profile: str = ""):
     """Validate, map, and enqueue a sync task. Returns (response_dict, http_status)."""
@@ -1161,8 +1175,26 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
             _prune_cooldown()
             expiry = _cooldown.get(mapped_folder, 0)
             if time.monotonic() < expiry:
-                log.info("[%s] [COOLDOWN] Recently synced, dropping follow-up event: %s", label, mapped_folder)
-                return {"status": "deduplicated"}, 200
+                pending = _cooldown_pending.get(mapped_folder)
+                if pending:
+                    if episode:
+                        pending.episode = _merge_episode_counts(pending.episode, episode)
+                    if quality:
+                        pending.quality = _merge_qualities(pending.quality, quality)
+                    if not pending.quality_profile and quality_profile:
+                        pending.quality_profile = quality_profile
+                    if custom_formats:
+                        pending.custom_formats = _merge_custom_formats(pending.custom_formats, custom_formats)
+                    log.info("[%s] [COOLDOWN] Merged into pending post-cooldown scan: %s", label, mapped_folder)
+                else:
+                    _cooldown_pending[mapped_folder] = task
+                    delay = expiry - time.monotonic()
+                    timer = threading.Timer(delay, _flush_cooldown_pending, args=(mapped_folder,))
+                    timer.daemon = True
+                    timer.start()
+                    log.info("[%s] [COOLDOWN] Recently synced, deferring follow-up scan %.0fs: %s",
+                             label, delay, mapped_folder)
+                return {"status": "deferred"}, 200
 
         _in_flight[mapped_folder] = task
 
@@ -1568,6 +1600,9 @@ def manual_webhook():
             elif status == "deduplicated":
                 message = f"⚠ Already in queue: {raw_path}"
                 msg_class = "warn"
+            elif status == "deferred":
+                message = f"⚠ Recently synced, scan deferred until cooldown expires: {raw_path}"
+                msg_class = "warn"
             else:
                 message = f"✗ {result.get('reason', 'Unknown error')} for: {raw_path}"
                 msg_class = "error"
@@ -1802,6 +1837,7 @@ def api_stats():
     last  = stats["last_sync"]
     with _in_flight_lock:
         in_flight_count = len(_in_flight)
+        deferred_count = len(_cooldown_pending)
     return jsonify({
         "syncs": {
             "total":          stats["total"],
@@ -1815,6 +1851,7 @@ def api_stats():
         "queue": {
             "depth":     sync_queue.qsize(),
             "in_flight": in_flight_count,
+            "deferred":  deferred_count,
         },
         "worker": {
             "alive": _worker_alive.is_set(),
