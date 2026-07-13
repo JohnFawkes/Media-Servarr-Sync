@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Remember me on login** — a "Remember me" checkbox on the login page makes the session cookie persistent (~31 days) instead of expiring when the browser closes.
+
 ## [v0.23.3] - 2026-07-06
 
 ### Fixed
