@@ -94,6 +94,24 @@
 
   input:focus { border-color: var(--accent); }
 
+  input[type="checkbox"] {
+    display: inline-block;
+    width: auto;
+    margin: 0 6px 0 0;
+    accent-color: var(--accent);
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: normal;
+    margin-bottom: 20px;
+    cursor: pointer;
+  }
+
   button {
     width: 100%;
     background: var(--accent);
@@ -143,6 +161,10 @@
     <input type="text" id="username" name="username" autocomplete="username" autofocus>
     <label for="password">Password</label>
     <input type="password" id="password" name="password" autocomplete="current-password">
+    <label class="checkbox-label">
+      <input type="checkbox" id="remember_me" name="remember_me">
+      Remember me
+    </label>
     <button type="submit">Sign in</button>
   </form>
 </div>

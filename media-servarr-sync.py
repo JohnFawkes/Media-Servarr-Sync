@@ -1570,7 +1570,7 @@ def login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         if username == MANUAL_USER and password == MANUAL_PASS:
-            session.permanent = False
+            session.permanent = bool(request.form.get('remember_me'))
             session['authenticated'] = True
             return redirect(url_for('manual_webhook'))
         error = "Invalid username or password."
