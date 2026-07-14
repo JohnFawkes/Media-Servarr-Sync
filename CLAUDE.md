@@ -46,10 +46,12 @@ compose.yaml            Docker Compose config
 .env.example            Environment variable template
 templates/
   login.html            Login page
+  onboarding.html        First-run setup wizard (admin password + connect Plex), shown instead of login.html until PLEX_TOKEN is configured
+  settings.html          Settings page — view/edit config, Plex server discovery, grab-token button
   manual_ui.html        Outer shell (header, PJAX script, nav); also serves the Sync tab page-content
   now_playing.html      Now Playing page (active Plex streams, geolocation maps, library scan)
   invites.html          Invite management page (create / revoke invite links and grants)
-  invite_onboard.html   Public invite acceptance flow (/invite/<token> and /invite/<token>/accept)
+  invite_onboard.html   Public invite acceptance flow (/invite/<token> and /invite/<token>/accept) — unrelated to onboarding.html, which is the admin first-run setup
 ```
 
 ## Key Internals
@@ -77,12 +79,14 @@ templates/
 | `/invites/revoke_grant/<id>` | POST | session | Revoke an accepted grant |
 | `/invite/<token>` | GET | none | Public invite landing page |
 | `/invite/<token>/accept` | POST | none | Accept an invite (adds Plex friend) |
+| `/onboarding` | GET/POST | none | First-run setup wizard (admin password + connect Plex), shown instead of login.html until PLEX_TOKEN is configured |
 | `/login` | GET/POST | — | Login page |
 | `/auth/plex/start` | POST | none (CSRF exempt) | Create a Plex.tv PIN, return the auth URL for "Sign in with Plex" |
 | `/auth/plex/poll` | GET | none | Poll a Plex.tv PIN; logs the session in once claimed |
 | `/logout` | GET | session | Logout |
 | `/settings` | GET/POST | session | Settings page — view/edit DB-backed config not pinned by env vars |
 | `/api/plex/discover` | POST | session (CSRF exempt) | List Plex servers tied to the account behind a token |
+| `/api/plex/token/poll` | GET | session | Poll a Plex.tv PIN and return the raw token (Settings page "grab token" button) |
 | `/health` | GET | none | Health check (Plex, rclone, queue depth) |
 | `/api/stats` | GET | none | Aggregate stats (Homepage widget) |
 | `/api/sessions` | GET | session | Raw Plex session data for Now Playing |

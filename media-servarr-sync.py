@@ -1637,8 +1637,55 @@ def login_demo():
     return redirect(url_for('manual_webhook'))
 
 
+def _onboarding_needed() -> bool:
+    """True when this instance has never been connected to Plex — used to
+    show a first-run setup wizard instead of a bare login form."""
+    return not PLEX_TOKEN
+
+
+@app.route('/onboarding', methods=['GET', 'POST'])
+def onboarding():
+    """First-run setup wizard: set an admin password and connect Plex,
+    shown instead of the login page until a Plex token is configured."""
+    if PLEX_TOKEN:
+        return redirect(url_for('login'))
+
+    message = ""
+    msg_class = "info"
+    if request.method == 'POST':
+        step = request.form.get('step', '')
+        if step == 'password':
+            new_pass = request.form.get('new_password', '').strip()
+            if not _cfg_is_env('MANUAL_PASS') and new_pass:
+                settings_store.set('MANUAL_PASS', new_pass)
+                load_config()
+            return redirect(url_for('onboarding'))
+        elif step == 'plex_manual':
+            url = request.form.get('plex_url', '').strip()
+            token = request.form.get('plex_token', '').strip()
+            if not token:
+                message = "Plex token is required"
+                msg_class = "error"
+            else:
+                if not _cfg_is_env('PLEX_URL') and url:
+                    settings_store.set('PLEX_URL', url)
+                if not _cfg_is_env('PLEX_TOKEN'):
+                    settings_store.set('PLEX_TOKEN', token)
+                load_config()
+                invalidate_plex()
+                return redirect(url_for('login'))
+
+    return render_template(
+        'onboarding.html', message=message, msg_class=msg_class,
+        manual_pass_locked=_cfg_is_env('MANUAL_PASS'),
+        using_default_pass=(MANUAL_PASS == "password"),
+    )
+
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if request.method == 'GET' and _onboarding_needed():
+        return redirect(url_for('onboarding'))
     error = ""
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
