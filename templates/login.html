@@ -140,6 +140,45 @@
     padding: 8px 12px;
     margin-bottom: 16px;
   }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 18px 0;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .divider::before, .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .plex-btn {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 11px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: border-color 0.15s, color 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .plex-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .plex-btn:disabled { opacity: 0.6; cursor: default; }
 </style>
 </head>
 <body>
@@ -167,11 +206,58 @@
     </label>
     <button type="submit">Sign in</button>
   </form>
+  <div class="divider">or</div>
+  <button type="button" class="plex-btn" id="plex-login-btn">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="4" fill="#e5a00d"/><path stroke="#0d0d0f" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/></svg>
+    Sign in with Plex
+  </button>
 </div>
 <script>
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js');
   }
+
+  (function() {
+    var btn = document.getElementById('plex-login-btn');
+    if (!btn) return;
+    var pollTimer = null;
+
+    function stopPoll() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      btn.disabled = false;
+      btn.textContent = '';
+      btn.appendChild(document.createTextNode('Sign in with Plex'));
+    }
+
+    btn.addEventListener('click', function() {
+      btn.disabled = true;
+      btn.textContent = 'Waiting for Plex…';
+      fetch('/auth/plex/start', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (!data.id || !data.auth_url) { stopPoll(); return; }
+          var popup = window.open(data.auth_url, 'plex-auth', 'width=500,height=700');
+          pollTimer = setInterval(function() {
+            fetch('/auth/plex/poll?id=' + encodeURIComponent(data.id))
+              .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+              .then(function(res) {
+                if (res.data.authenticated) {
+                  clearInterval(pollTimer);
+                  if (popup) popup.close();
+                  window.location.href = '/';
+                } else if (!res.ok) {
+                  clearInterval(pollTimer);
+                  if (popup) popup.close();
+                  stopPoll();
+                  alert(res.data.error || 'Plex sign-in failed');
+                }
+              })
+              .catch(function() {});
+          }, 2000);
+        })
+        .catch(function() { stopPoll(); });
+    });
+  })();
 </script>
 </body>
 </html>
