@@ -134,17 +134,26 @@
   .msg-error   { color: var(--error);   border-color: var(--error);   background: rgba(248,113,113,0.07); }
   .msg-info    { color: var(--info);    border-color: var(--info);    background: rgba(96,165,250,0.07); }
 
-  .discover-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
-  .discover-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-  .discover-item {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 8px 12px; cursor: pointer; transition: border-color 0.15s;
-    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  .refresh-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    font-size: 10px; line-height: 1; padding: 0; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, transform 0.3s;
   }
-  .discover-item:hover { border-color: var(--accent); }
-  .discover-item .srv-name { color: var(--text); font-weight: 600; }
-  .discover-item .srv-uri  { color: var(--muted); }
+  .refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .refresh-btn.spinning { animation: spin 0.8s linear infinite; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  #discover-select {
+    background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius);
+    color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    padding: 8px 12px; outline: none; width: 100%; margin-top: 6px;
+  }
+  .discover-status {
+    display: block; font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+    color: var(--muted); margin-top: 4px;
+  }
 
   .save-bar { display: flex; justify-content: flex-end; margin-top: 4px; }
 
@@ -188,15 +197,6 @@
   <div class="message msg-{{ msg_class }}">{{ message }}</div>
   {% endif %}
 
-  <div class="card">
-    <div class="card-label">Plex Server Discovery</div>
-    <div class="discover-row">
-      <button type="button" class="btn-outline" id="discover-btn">Discover Servers Tied to This Account</button>
-      <span id="discover-status" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);"></span>
-    </div>
-    <div class="discover-list" id="discover-list"></div>
-  </div>
-
   <form method="post" id="settings-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% for group in groups %}
@@ -208,7 +208,14 @@
           <label for="fld-{{ f.env_name }}">
             {{ f.label }}
             {% if f.from_env %}<span class="badge badge-env">Set via environment</span>{% endif %}
+            {% if f.env_name == 'PLEX_URL' and not f.from_env %}
+            <button type="button" class="refresh-btn" id="discover-btn" title="Discover servers tied to this Plex account">⟳</button>
+            {% endif %}
           </label>
+          {% if f.env_name == 'PLEX_URL' and not f.from_env %}
+          <select id="discover-select" style="display:none;"></select>
+          <span id="discover-status" class="discover-status"></span>
+          {% endif %}
           {% if f.kind == 'bool' %}
           <div class="checkbox-row">
             <input type="checkbox" id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
@@ -296,12 +303,19 @@ window.__pjaxCleanup = function() { window.onscroll = null; };
 (function() {
   var btn = document.getElementById('discover-btn');
   var status = document.getElementById('discover-status');
-  var list = document.getElementById('discover-list');
+  var select = document.getElementById('discover-select');
+  var urlField = document.getElementById('fld-PLEX_URL');
   if (!btn) return;
 
+  select.addEventListener('change', function() {
+    if (select.value && urlField) urlField.value = select.value;
+  });
+
   btn.addEventListener('click', function() {
+    btn.classList.add('spinning');
     status.textContent = 'Looking up servers…';
-    list.innerHTML = '';
+    select.style.display = 'none';
+    select.innerHTML = '';
     var tokenField = document.getElementById('fld-PLEX_TOKEN');
     var body = {};
     if (tokenField && !tokenField.disabled && tokenField.value.trim()) {
@@ -314,32 +328,32 @@ window.__pjaxCleanup = function() { window.onscroll = null; };
     })
       .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
       .then(function(res) {
+        btn.classList.remove('spinning');
         if (!res.ok) {
           status.textContent = res.data.error || 'Discovery failed';
           return;
         }
         var servers = res.data.servers || [];
-        if (!servers.length) {
+        var options = [];
+        servers.forEach(function(s) {
+          (s.connections || []).forEach(function(c) {
+            options.push({label: s.name + ' — ' + c.uri + (c.local ? ' (local)' : ' (remote)'), uri: c.uri});
+          });
+        });
+        if (!options.length) {
           status.textContent = 'No servers found for this account';
           return;
         }
-        status.textContent = servers.length + ' server(s) found — click one to fill in Plex URL';
-        servers.forEach(function(s) {
-          (s.connections || []).forEach(function(c) {
-            var item = document.createElement('div');
-            item.className = 'discover-item';
-            item.innerHTML = '<span class="srv-name">' + s.name + '</span>' +
-              '<span class="srv-uri">' + c.uri + '</span>' +
-              '<span class="badge ' + (c.local ? 'badge-env' : '') + '">' + (c.local ? 'local' : 'remote') + '</span>';
-            item.addEventListener('click', function() {
-              var urlField = document.getElementById('fld-PLEX_URL');
-              if (urlField && !urlField.disabled) urlField.value = c.uri;
-            });
-            list.appendChild(item);
-          });
-        });
+        select.innerHTML = '<option value="">Select a server…</option>' + options.map(function(o) {
+          return '<option value="' + o.uri + '">' + o.label + '</option>';
+        }).join('');
+        select.style.display = '';
+        status.textContent = options.length + ' server(s) found';
       })
-      .catch(function() { status.textContent = 'Discovery failed'; });
+      .catch(function() {
+        btn.classList.remove('spinning');
+        status.textContent = 'Discovery failed';
+      });
   });
 })();
 
