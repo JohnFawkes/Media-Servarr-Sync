@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Get Token via Plex Sign-In (Settings page)** — a button next to the Plex Token field on the Settings page runs the same Plex.tv PIN sign-in flow used on the login page and fills in the token directly, no manual copy/paste needed.
+
+### Changed
+- **Settings page Plex server discovery** — only lists Plex Media Servers the signed-in account owns/administers, not ones it's merely been invited to as a friend/shared user. The refresh icon is bigger and Plex-amber colored, and a visible hint line now explains what it does instead of relying on a hover tooltip alone.
+
+### Added
 - **Remember me on login** — a "Remember me" checkbox on the login page makes the session cookie persistent (~31 days) instead of expiring when the browser closes.
 - **Sign in with Plex** — a "Sign in with Plex" button on the login page uses Plex.tv's PIN-based OAuth flow (no password entry), and bootstraps `PLEX_TOKEN` automatically on first sign-in if it isn't already configured. Once a server owner is configured, only that same Plex account can sign in this way.
 - **Settings page** — a new `/settings` page lets you view and edit every configurable value (Plex, Sonarr/Radarr, rclone, timing, path mappings, manual UI login, onboarding links) from the web UI instead of only via `.env`. Values already set via environment variables are shown locked/read-only (env always wins); anything else is editable and persisted to a new `/data/settings.db`, taking effect immediately without a restart. A small refresh button next to the Plex URL field looks up Plex Media Servers linked to the signed-in/entered Plex account and lists them in a dropdown to pick from.

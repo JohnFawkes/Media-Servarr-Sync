@@ -1681,12 +1681,8 @@ def auth_plex_start():
     return jsonify({"id": data["id"], "auth_url": auth_url})
 
 
-@app.route('/auth/plex/poll', methods=['GET'])
-def auth_plex_poll():
-    """Poll a Plex.tv PIN for completion; log the session in once claimed."""
-    pin_id = request.args.get('id', '').strip()
-    if not pin_id:
-        return jsonify({"error": "id required"}), 400
+def _poll_plex_pin(pin_id: str):
+    """Poll a Plex.tv PIN. Returns (token_or_None, error_response_or_None)."""
     try:
         r = requests.get(
             f"https://plex.tv/api/v2/pins/{pin_id}",
@@ -1699,9 +1695,19 @@ def auth_plex_poll():
         data = r.json()
     except requests.RequestException as exc:
         log.error("[AUTH] Failed to poll Plex PIN: %s", exc)
-        return jsonify({"error": "Could not reach plex.tv"}), 502
+        return None, (jsonify({"error": "Could not reach plex.tv"}), 502)
+    return data.get("authToken"), None
 
-    new_token = data.get("authToken")
+
+@app.route('/auth/plex/poll', methods=['GET'])
+def auth_plex_poll():
+    """Poll a Plex.tv PIN for completion; log the session in once claimed."""
+    pin_id = request.args.get('id', '').strip()
+    if not pin_id:
+        return jsonify({"error": "id required"}), 400
+    new_token, error = _poll_plex_pin(pin_id)
+    if error:
+        return error
     if not new_token:
         return jsonify({"authenticated": False})
 
@@ -1728,6 +1734,24 @@ def auth_plex_poll():
     session.permanent = True
     session['authenticated'] = True
     return jsonify({"authenticated": True})
+
+
+@app.route('/api/plex/token/poll', methods=['GET'])
+@requires_auth
+def api_plex_token_poll():
+    """Poll a Plex.tv PIN and return the raw token once claimed, for the
+    Settings page's 'Get Token via Plex Sign-In' button. The caller is
+    already an authenticated admin, so no account-matching is enforced —
+    the point of this button is to let them pick whichever account they want."""
+    pin_id = request.args.get('id', '').strip()
+    if not pin_id:
+        return jsonify({"error": "id required"}), 400
+    token, error = _poll_plex_pin(pin_id)
+    if error:
+        return error
+    if not token:
+        return jsonify({"token": None})
+    return jsonify({"token": token})
 
 
 @app.route('/logout')
@@ -2375,6 +2399,8 @@ def api_plex_discover():
         for resource in account.resources():
             if 'server' not in (resource.provides or '').split(','):
                 continue
+            if not resource.owned:
+                continue  # skip servers shared with this account, not owned/administered by it
             connections = [
                 {'uri': c.uri, 'local': c.local, 'address': c.address, 'port': c.port}
                 for c in resource.connections
