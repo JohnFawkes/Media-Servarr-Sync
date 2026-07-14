@@ -2,7 +2,10 @@
 FROM python:3.14-slim AS base
 
 # ── System deps ──────────────────────────────────────────────────────────────
+# upgrade picks up security patches for packages already in the base image
+# (e.g. liblzma5) that may lag behind the base image's own release date.
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        curl \
     && rm -rf /var/lib/apt/lists/*

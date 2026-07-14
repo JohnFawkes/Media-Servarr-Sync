@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - **Remember me on login** — a "Remember me" checkbox on the login page makes the session cookie persistent (~31 days) instead of expiring when the browser closes.
 
+### Security
+- **liblzma5 DoS (CVE-2026-34743)** — the Docker image now runs `apt-get upgrade` during build so security patches for packages already present in the base image (not just ones this project installs directly) are picked up, fixing a medium-severity buffer-overflow DoS in `liblzma5` flagged by Trivy.
+
 ## [v0.23.3] - 2026-07-06
 
 ### Fixed
