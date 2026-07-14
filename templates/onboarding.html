@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Media Servarr Sync · Setup</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
+
+<meta name="theme-color" content="#e5a00d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ServarrSync">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/fonts.css">
+<style>
+
+  :root {
+    --bg: #0d0d0f;
+    --surface: #161618;
+    --border: #2a2a2e;
+    --accent: #e5a00d;
+    --text: #e8e8e8;
+    --muted: #666;
+    --error: #f87171;
+    --success: #4ade80;
+    --radius: 4px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .shell { width: 100%; max-width: 420px; }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .logo-icon { flex-shrink: 0; filter: drop-shadow(0 0 6px rgba(229,160,13,0.5)); }
+  h1 {
+    font-size: 16px; font-weight: 600; letter-spacing: 0.06em;
+    color: var(--accent); text-transform: uppercase;
+  }
+  .subtitle {
+    font-size: 12px; color: var(--muted); margin-bottom: 28px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 26px;
+    margin-bottom: 16px;
+  }
+  .step-label {
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 6px;
+  }
+  .step-desc {
+    font-size: 12px; color: var(--muted); margin-bottom: 18px; line-height: 1.5;
+  }
+
+  label {
+    display: block; font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  }
+  input {
+    display: block; width: 100%;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+    padding: 10px 12px; margin-bottom: 16px; outline: none; transition: border-color 0.15s;
+  }
+  input:focus { border-color: var(--accent); }
+
+  button {
+    width: 100%;
+    background: var(--accent); border: none; border-radius: var(--radius);
+    color: #0d0d0f; font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
+    padding: 11px; cursor: pointer; text-transform: uppercase;
+    margin-top: 4px; transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.6; cursor: default; }
+
+  .plex-btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+
+  .divider {
+    display: flex; align-items: center; gap: 10px; margin: 18px 0;
+    color: var(--muted); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  .skip-link {
+    display: block; text-align: center; margin-top: 12px;
+    font-size: 11px; color: var(--muted); text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .skip-link:hover { color: var(--text); }
+
+  .error {
+    font-size: 11px; color: var(--error);
+    background: rgba(248,113,113,0.07); border: 1px solid var(--error);
+    border-radius: var(--radius); padding: 8px 12px; margin-bottom: 16px;
+  }
+  .status-line { font-size: 11px; color: var(--muted); margin-top: 8px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="logo">
+    <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="28" height="28">
+      <rect width="24" height="24" rx="4" fill="#0d0d0f"/>
+      <path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
+      <polyline stroke="#e5a00d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
+    </svg>
+    <h1>Media Servarr Sync</h1>
+  </div>
+  <div class="subtitle">Let's get this instance set up.</div>
+
+  {% if message %}
+  <div class="error">{{ message }}</div>
+  {% endif %}
+
+  {% if using_default_pass and not manual_pass_locked %}
+  <div class="card">
+    <div class="step-label">Step 1 · Set an admin password</div>
+    <div class="step-desc">The default admin password is publicly known — set your own before going further.</div>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="step" value="password">
+      <label for="new_password">New password</label>
+      <input type="password" id="new_password" name="new_password" autocomplete="new-password" autofocus>
+      <button type="submit">Save Password</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="step-label">Step 2 · Connect to Plex</div>
+    <div class="step-desc">Sign in with your Plex account, or enter a server URL and token manually.</div>
+    <button type="button" class="plex-btn" id="plex-login-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="4" fill="#0d0d0f"/><path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/></svg>
+      Sign in with Plex
+    </button>
+    <div class="status-line" id="plex-status"></div>
+    <div class="divider">or enter manually</div>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="step" value="plex_manual">
+      <label for="plex_url">Plex URL</label>
+      <input type="text" id="plex_url" name="plex_url" placeholder="http://192.168.1.100:32400">
+      <label for="plex_token">Plex Token</label>
+      <input type="text" id="plex_token" name="plex_token" placeholder="your-plex-token">
+      <button type="submit">Save &amp; Continue</button>
+    </form>
+  </div>
+
+  <a class="skip-link" href="/login">Skip for now — I'll configure this later in Settings</a>
+</div>
+<script>
+  (function() {
+    var btn = document.getElementById('plex-login-btn');
+    var status = document.getElementById('plex-status');
+    if (!btn) return;
+    var pollTimer = null;
+
+    function stopPoll(msg) {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      btn.disabled = false;
+      status.textContent = msg || '';
+    }
+
+    btn.addEventListener('click', function() {
+      btn.disabled = true;
+      status.textContent = 'Waiting for Plex…';
+      fetch('/auth/plex/start', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (!data.id || !data.auth_url) { stopPoll('Could not start Plex sign-in'); return; }
+          var popup = window.open(data.auth_url, 'plex-auth', 'width=500,height=700');
+          pollTimer = setInterval(function() {
+            fetch('/auth/plex/poll?id=' + encodeURIComponent(data.id))
+              .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+              .then(function(res) {
+                if (res.data.authenticated) {
+                  clearInterval(pollTimer);
+                  if (popup) popup.close();
+                  window.location.href = '/';
+                } else if (!res.ok) {
+                  clearInterval(pollTimer);
+                  if (popup) popup.close();
+                  stopPoll(res.data.error || 'Plex sign-in failed');
+                }
+              })
+              .catch(function() {});
+          }, 2000);
+        })
+        .catch(function() { stopPoll('Could not start Plex sign-in'); });
+    });
+  })();
+</script>
+</body>
+</html>

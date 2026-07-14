@@ -68,9 +68,9 @@
     border-radius: var(--radius); padding: 24px; margin-bottom: 16px;
   }
   .card-label {
-    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px;
     letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--muted); margin-bottom: 18px;
+    color: var(--accent); margin-bottom: 18px;
   }
 
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -79,13 +79,13 @@
   .field { display: flex; flex-direction: column; gap: 5px; }
   .field-full { grid-column: 1 / -1; }
   label {
-    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
-    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent);
     display: flex; align-items: center; gap: 6px;
   }
   input[type="text"], input[type="password"], input[type="number"], textarea {
     background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
-    color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    color: var(--accent); font-family: 'IBM Plex Mono', monospace; font-size: 14px;
     padding: 8px 12px; outline: none; transition: border-color 0.15s; width: 100%;
   }
   textarea { min-height: 68px; resize: vertical; }
@@ -96,14 +96,14 @@
 
   .badge {
     display: inline-block; padding: 1px 6px; border-radius: 3px;
-    font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
     font-weight: 500; letter-spacing: 0.03em;
   }
   .badge-env { background: rgba(96,165,250,0.1); color: var(--info); border: 1px solid rgba(96,165,250,0.25); }
 
   .checkbox-row {
     display: flex; align-items: center; gap: 8px;
-    font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text);
+    font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: var(--accent);
   }
   .checkbox-row input[type="checkbox"] {
     width: 14px; height: 14px; padding: 0; cursor: pointer; accent-color: var(--accent);
@@ -112,21 +112,21 @@
   button[type="submit"], .btn {
     background: var(--accent); border: none; border-radius: var(--radius);
     color: #0d0d0f; font-family: 'IBM Plex Mono', monospace;
-    font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.06em;
     padding: 10px 20px; cursor: pointer; text-transform: uppercase;
     transition: opacity 0.15s; white-space: nowrap;
   }
   button[type="submit"]:hover, .btn:hover { opacity: 0.85; }
   .btn-outline {
-    background: none; border: 1px solid var(--border); color: var(--text);
-    font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.05em;
+    background: none; border: 1px solid var(--accent); color: var(--accent);
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px; letter-spacing: 0.05em;
     padding: 7px 14px; border-radius: var(--radius); cursor: pointer;
-    text-transform: uppercase; transition: color 0.15s, border-color 0.15s;
+    text-transform: uppercase; transition: opacity 0.15s;
   }
-  .btn-outline:hover { color: var(--accent); border-color: var(--accent); }
+  .btn-outline:hover { opacity: 0.75; }
 
   .message {
-    font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 14px;
     padding: 10px 14px; border-radius: var(--radius);
     margin-bottom: 16px; border-left: 3px solid;
   }
@@ -136,23 +136,36 @@
 
   .refresh-btn {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 16px; height: 16px; border-radius: 50%;
-    background: none; border: 1px solid var(--border); color: var(--muted);
-    font-size: 10px; line-height: 1; padding: 0; cursor: pointer;
-    transition: color 0.15s, border-color 0.15s, transform 0.3s;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: none; border: 1px solid var(--accent); color: var(--accent);
+    font-size: 15px; line-height: 1; padding: 0; cursor: pointer;
+    transition: opacity 0.15s, transform 0.3s;
   }
-  .refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .refresh-btn:hover { opacity: 0.75; }
   .refresh-btn.spinning { animation: spin 0.8s linear infinite; }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+  .refresh-inline {
+    color: var(--accent); font-size: 14px; font-weight: 700;
+  }
+
+  .hint-text {
+    display: block; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
+    color: var(--accent); margin-bottom: 4px;
+  }
+
+  .btn-plex-token {
+    align-self: flex-start; margin-bottom: 4px;
+  }
+
   #discover-select {
     background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius);
-    color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    color: var(--accent); font-family: 'IBM Plex Mono', monospace; font-size: 14px;
     padding: 8px 12px; outline: none; width: 100%; margin-top: 6px;
   }
   .discover-status {
-    display: block; font-family: 'IBM Plex Mono', monospace; font-size: 10px;
-    color: var(--muted); margin-top: 4px;
+    display: block; font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    color: var(--accent); margin-top: 4px;
   }
 
   .save-bar { display: flex; justify-content: flex-end; margin-top: 4px; }
@@ -213,8 +226,13 @@
             {% endif %}
           </label>
           {% if f.env_name == 'PLEX_URL' and not f.from_env %}
+          <span class="hint-text">Click <span class="refresh-inline">⟳</span> to look up the Plex servers you manage</span>
           <select id="discover-select" style="display:none;"></select>
           <span id="discover-status" class="discover-status"></span>
+          {% endif %}
+          {% if f.env_name == 'PLEX_TOKEN' and not f.from_env %}
+          <button type="button" class="btn-outline btn-plex-token" id="grab-token-btn">Get Token via Plex Sign-In</button>
+          <span id="grab-token-status" class="discover-status"></span>
           {% endif %}
           {% if f.kind == 'bool' %}
           <div class="checkbox-row">
@@ -353,6 +371,51 @@ window.__pjaxCleanup = function() { window.onscroll = null; };
       .catch(function() {
         btn.classList.remove('spinning');
         status.textContent = 'Discovery failed';
+      });
+  });
+})();
+
+(function() {
+  var btn = document.getElementById('grab-token-btn');
+  var status = document.getElementById('grab-token-status');
+  var tokenField = document.getElementById('fld-PLEX_TOKEN');
+  if (!btn) return;
+
+  btn.addEventListener('click', function() {
+    btn.disabled = true;
+    status.textContent = 'Waiting for Plex…';
+    fetch('/auth/plex/start', {method: 'POST'})
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.id || !data.auth_url) {
+          btn.disabled = false;
+          status.textContent = 'Could not start Plex sign-in';
+          return;
+        }
+        var popup = window.open(data.auth_url, 'plex-token-auth', 'width=500,height=700');
+        var pollTimer = setInterval(function() {
+          fetch('/api/plex/token/poll?id=' + encodeURIComponent(data.id))
+            .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+            .then(function(res) {
+              if (res.data.token) {
+                clearInterval(pollTimer);
+                if (popup) popup.close();
+                if (tokenField) tokenField.value = res.data.token;
+                btn.disabled = false;
+                status.textContent = 'Token received';
+              } else if (!res.ok) {
+                clearInterval(pollTimer);
+                if (popup) popup.close();
+                btn.disabled = false;
+                status.textContent = res.data.error || 'Plex sign-in failed';
+              }
+            })
+            .catch(function() {});
+        }, 2000);
+      })
+      .catch(function() {
+        btn.disabled = false;
+        status.textContent = 'Could not start Plex sign-in';
       });
   });
 })();
