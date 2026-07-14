@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings · Media Servarr Sync</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><rect width='24' height='24' rx='4' fill='%230d0d0f'/><path stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' d='M20 12a8 8 0 1 1-1.6-4.8'/><polyline stroke='%23e5a00d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' points='20,4 20,8 16,8'/></svg>">
+
+<meta name="theme-color" content="#e5a00d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ServarrSync">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/fonts.css">
+<style id="page-style">
+
+  :root {
+    --bg: #0d0d0f; --surface: #161618; --border: #2a2a2e;
+    --accent: #e5a00d; --accent-dim: rgba(229,160,13,0.12);
+    --text: #e8e8e8; --muted: #666;
+    --success: #4ade80; --warn: #fb923c; --error: #f87171; --info: #60a5fa;
+    --radius: 4px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif; font-size: 14px;
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; padding: 48px 20px;
+  }
+
+  .shell { width: 100%; max-width: 780px; }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 36px; border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+  }
+  .logo-icon { flex-shrink: 0; filter: drop-shadow(0 0 6px rgba(229,160,13,0.5)); }
+  h1 {
+    font-family: 'IBM Plex Mono', monospace; font-size: 18px;
+    font-weight: 600; letter-spacing: 0.04em; color: var(--accent);
+  }
+  .header-meta { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+  .header-nav  { display: flex; gap: 6px; }
+  .nav-link {
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); text-decoration: none;
+    padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius);
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .nav-link:hover  { color: var(--text); border-color: var(--text); }
+  .nav-link.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+  a.logout {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted); text-decoration: none;
+    padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+    transition: color 0.15s, border-color 0.15s;
+  }
+  a.logout:hover { color: var(--error); border-color: var(--error); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px; margin-bottom: 16px;
+  }
+  .card-label {
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 18px;
+  }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 520px) { .form-grid { grid-template-columns: 1fr; } }
+
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field-full { grid-column: 1 / -1; }
+  label {
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+  }
+  input[type="text"], input[type="password"], input[type="number"], textarea {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    padding: 8px 12px; outline: none; transition: border-color 0.15s; width: 100%;
+  }
+  textarea { min-height: 68px; resize: vertical; }
+  input:focus, textarea:focus { border-color: var(--accent); }
+  input:disabled, textarea:disabled {
+    opacity: 0.55; cursor: not-allowed;
+  }
+
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+    font-weight: 500; letter-spacing: 0.03em;
+  }
+  .badge-env { background: rgba(96,165,250,0.1); color: var(--info); border: 1px solid rgba(96,165,250,0.25); }
+
+  .checkbox-row {
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text);
+  }
+  .checkbox-row input[type="checkbox"] {
+    width: 14px; height: 14px; padding: 0; cursor: pointer; accent-color: var(--accent);
+  }
+
+  button[type="submit"], .btn {
+    background: var(--accent); border: none; border-radius: var(--radius);
+    color: #0d0d0f; font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+    padding: 10px 20px; cursor: pointer; text-transform: uppercase;
+    transition: opacity 0.15s; white-space: nowrap;
+  }
+  button[type="submit"]:hover, .btn:hover { opacity: 0.85; }
+  .btn-outline {
+    background: none; border: 1px solid var(--border); color: var(--text);
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.05em;
+    padding: 7px 14px; border-radius: var(--radius); cursor: pointer;
+    text-transform: uppercase; transition: color 0.15s, border-color 0.15s;
+  }
+  .btn-outline:hover { color: var(--accent); border-color: var(--accent); }
+
+  .message {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    padding: 10px 14px; border-radius: var(--radius);
+    margin-bottom: 16px; border-left: 3px solid;
+  }
+  .msg-success { color: var(--success); border-color: var(--success); background: rgba(74,222,128,0.07); }
+  .msg-error   { color: var(--error);   border-color: var(--error);   background: rgba(248,113,113,0.07); }
+  .msg-info    { color: var(--info);    border-color: var(--info);    background: rgba(96,165,250,0.07); }
+
+  .refresh-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    font-size: 10px; line-height: 1; padding: 0; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, transform 0.3s;
+  }
+  .refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .refresh-btn.spinning { animation: spin 0.8s linear infinite; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  #discover-select {
+    background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius);
+    color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    padding: 8px 12px; outline: none; width: 100%; margin-top: 6px;
+  }
+  .discover-status {
+    display: block; font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+    color: var(--muted); margin-top: 4px;
+  }
+
+  .save-bar { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+  #back-to-top {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--accent);
+    font-family: 'IBM Plex Mono', monospace; font-size: 14px;
+    padding: 8px 12px; cursor: pointer; opacity: 0; pointer-events: none;
+    transition: opacity 0.2s, border-color 0.15s; z-index: 100;
+  }
+  #back-to-top.visible { opacity: 1; pointer-events: auto; }
+  #back-to-top:hover   { border-color: var(--accent); background: var(--accent-dim); }
+</style>
+</head>
+<body>
+<button id="back-to-top" title="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑ Top</button>
+
+<div class="shell">
+  <header>
+    <a href="/" style="display:inline-flex;align-items:center;" title="Home">
+      <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" width="28" height="28">
+        <rect width="24" height="24" rx="4" fill="#0d0d0f"/>
+        <path stroke="#e5a00d" stroke-width="2" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/>
+        <polyline stroke="#e5a00d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/>
+      </svg>
+    </a>
+    <div class="header-meta">
+      <h1>MEDIA SERVARR SYNC</h1>
+      <nav class="header-nav">
+        <a href="/" class="nav-link">Sync</a>
+        <a href="/invites" class="nav-link">Invites</a>
+        <a href="/settings" class="nav-link active">Settings</a>
+      </nav>
+    </div>
+    <a class="logout" href="/logout">Logout</a>
+  </header>
+  <div id="page-content">
+
+  {% if message %}
+  <div class="message msg-{{ msg_class }}">{{ message }}</div>
+  {% endif %}
+
+  <form method="post" id="settings-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for group in groups %}
+    <div class="card">
+      <div class="card-label">{{ group.name }}</div>
+      <div class="form-grid">
+        {% for f in group.fields %}
+        <div class="field {% if f.kind == 'json' %}field-full{% endif %}">
+          <label for="fld-{{ f.env_name }}">
+            {{ f.label }}
+            {% if f.from_env %}<span class="badge badge-env">Set via environment</span>{% endif %}
+            {% if f.env_name == 'PLEX_URL' and not f.from_env %}
+            <button type="button" class="refresh-btn" id="discover-btn" title="Discover servers tied to this Plex account">⟳</button>
+            {% endif %}
+          </label>
+          {% if f.env_name == 'PLEX_URL' and not f.from_env %}
+          <select id="discover-select" style="display:none;"></select>
+          <span id="discover-status" class="discover-status"></span>
+          {% endif %}
+          {% if f.kind == 'bool' %}
+          <div class="checkbox-row">
+            <input type="checkbox" id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
+                   {% if f.value in (true, 'true', 'True') %}checked{% endif %}
+                   {% if f.from_env %}disabled{% endif %}>
+            <span>Enabled</span>
+          </div>
+          {% elif f.kind == 'json' %}
+          <textarea id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
+                    placeholder="{{ f.placeholder }}"
+                    {% if f.from_env %}disabled{% endif %}>{{ f.value }}</textarea>
+          {% else %}
+          <input type="{{ 'password' if f.kind == 'password' else 'text' }}"
+                 id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
+                 value="{{ f.value }}" placeholder="{{ f.placeholder }}"
+                 {% if f.from_env %}disabled{% endif %}>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    <div class="save-bar">
+      <button type="submit">Save Settings</button>
+    </div>
+  </form>
+
+  </div>{# /page-content #}
+</div>
+
+<script>/* PJAX: intercept nav-link clicks, swap #page-content, re-run page-init */
+(function() {
+  function pjaxLoad(url) {
+    if (typeof window.__pjaxCleanup === 'function') {
+      try { window.__pjaxCleanup(); } catch(e) {}
+      window.__pjaxCleanup = null;
+    }
+    fetch(url)
+      .then(function(r) { if (!r.ok) throw r; return r.text(); })
+      .then(function(html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newPath = new URL(url, location.origin).pathname;
+        var btt = document.getElementById('back-to-top');
+        if (btt) { btt.classList.remove('visible'); btt.style.display = 'none'; }
+        var leg = document.querySelector('.legend');
+        if (leg) leg.style.display = 'none';
+        var nc = doc.getElementById('page-content');
+        var cc = document.getElementById('page-content');
+        if (nc && cc) cc.innerHTML = nc.innerHTML;
+        var ns = doc.getElementById('page-style');
+        var cs = document.getElementById('page-style');
+        if (ns && cs) cs.textContent = ns.textContent;
+        document.querySelectorAll('a.nav-link').forEach(function(a) {
+          a.classList.toggle('active', new URL(a.href, location.origin).pathname === newPath);
+        });
+        document.title = doc.title || document.title;
+        history.pushState({pjax: url}, '', url);
+        window.scrollTo(0, 0);
+        var init = doc.getElementById('page-init');
+        if (init) {
+          var s = document.createElement('script');
+          s.textContent = init.textContent;
+          document.body.appendChild(s);
+          document.body.removeChild(s);
+        }
+      })
+      .catch(function() { location.href = url; });
+  }
+  document.addEventListener('click', function(e) {
+    var a = e.target.closest('a.nav-link');
+    if (!a || !a.href) return;
+    if (new URL(a.href, location.origin).origin !== location.origin) return;
+    e.preventDefault();
+    pjaxLoad(a.href);
+  });
+  window.addEventListener('popstate', function(e) {
+    if (e.state && e.state.pjax) pjaxLoad(e.state.pjax);
+  });
+  history.replaceState({pjax: location.href}, '');
+})();
+</script>
+<script id="page-init">
+window.__pjaxCleanup = function() { window.onscroll = null; };
+
+(function() {
+  var btn = document.getElementById('discover-btn');
+  var status = document.getElementById('discover-status');
+  var select = document.getElementById('discover-select');
+  var urlField = document.getElementById('fld-PLEX_URL');
+  if (!btn) return;
+
+  select.addEventListener('change', function() {
+    if (select.value && urlField) urlField.value = select.value;
+  });
+
+  btn.addEventListener('click', function() {
+    btn.classList.add('spinning');
+    status.textContent = 'Looking up servers…';
+    select.style.display = 'none';
+    select.innerHTML = '';
+    var tokenField = document.getElementById('fld-PLEX_TOKEN');
+    var body = {};
+    if (tokenField && !tokenField.disabled && tokenField.value.trim()) {
+      body.token = tokenField.value.trim();
+    }
+    fetch('/api/plex/discover', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    })
+      .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+      .then(function(res) {
+        btn.classList.remove('spinning');
+        if (!res.ok) {
+          status.textContent = res.data.error || 'Discovery failed';
+          return;
+        }
+        var servers = res.data.servers || [];
+        var options = [];
+        servers.forEach(function(s) {
+          (s.connections || []).forEach(function(c) {
+            options.push({label: s.name + ' — ' + c.uri + (c.local ? ' (local)' : ' (remote)'), uri: c.uri});
+          });
+        });
+        if (!options.length) {
+          status.textContent = 'No servers found for this account';
+          return;
+        }
+        select.innerHTML = '<option value="">Select a server…</option>' + options.map(function(o) {
+          return '<option value="' + o.uri + '">' + o.label + '</option>';
+        }).join('');
+        select.style.display = '';
+        status.textContent = options.length + ' server(s) found';
+      })
+      .catch(function() {
+        btn.classList.remove('spinning');
+        status.textContent = 'Discovery failed';
+      });
+  });
+})();
+
+(function() {
+  var btt = document.getElementById('back-to-top');
+  if (!btt) return;
+  window.onscroll = function() {
+    btt.classList.toggle('visible', window.scrollY > 300);
+  };
+})();
+</script>
+</body>
+</html>

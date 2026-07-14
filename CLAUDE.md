@@ -56,6 +56,7 @@ templates/
 
 - **`SyncTask`** — dataclass for a queued scan task
 - **`SyncHistory`** — SQLite3 history at `/data/history.db`; handles dedup and cooldown
+- **`SettingsStore`** — SQLite3 key/value store at `/data/settings.db`. `load_config()` resolves each config value as env var → DB setting → default, and is re-run after a Settings page save to hot-reload without a restart. Fields pinned by an env var are locked (read-only) in the Settings UI.
 - **Background worker** (`sync_worker`) — drains the queue with configurable `WEBHOOK_DELAY`
 - **Deduplication** — duplicate webhooks for the same folder are merged while a task is in-flight
 - **Quality/custom format caching** — fetched from Sonarr/Radarr API, refreshed every 6 hours
@@ -77,7 +78,11 @@ templates/
 | `/invite/<token>` | GET | none | Public invite landing page |
 | `/invite/<token>/accept` | POST | none | Accept an invite (adds Plex friend) |
 | `/login` | GET/POST | — | Login page |
+| `/auth/plex/start` | POST | none (CSRF exempt) | Create a Plex.tv PIN, return the auth URL for "Sign in with Plex" |
+| `/auth/plex/poll` | GET | none | Poll a Plex.tv PIN; logs the session in once claimed |
 | `/logout` | GET | session | Logout |
+| `/settings` | GET/POST | session | Settings page — view/edit DB-backed config not pinned by env vars |
+| `/api/plex/discover` | POST | session (CSRF exempt) | List Plex servers tied to the account behind a token |
 | `/health` | GET | none | Health check (Plex, rclone, queue depth) |
 | `/api/stats` | GET | none | Aggregate stats (Homepage widget) |
 | `/api/sessions` | GET | session | Raw Plex session data for Now Playing |
