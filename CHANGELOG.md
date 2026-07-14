@@ -27,6 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - **Now Playing mini player map** — the location map was hidden when the Now Playing card was in the left-sidebar layout on wide displays. It now renders at the bottom of each session card, spanning the full card width.
 
+### Changed
+- Update dependency PlexAPI to v4.18.2
+
 ---
 
 ## [v0.23.0] - 2026-07-01
