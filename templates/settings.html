@@ -136,17 +136,18 @@
 
   .refresh-btn {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 22px; height: 22px; border-radius: 50%;
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
     background: none; border: 1px solid var(--accent); color: var(--accent);
-    font-size: 15px; line-height: 1; padding: 0; cursor: pointer;
-    transition: opacity 0.15s, transform 0.3s;
+    line-height: 1; padding: 0; cursor: pointer;
+    transition: opacity 0.15s;
   }
+  .refresh-btn svg { display: block; }
   .refresh-btn:hover { opacity: 0.75; }
-  .refresh-btn.spinning { animation: spin 0.8s linear infinite; }
+  .refresh-btn.spinning svg { animation: spin 0.8s linear infinite; transform-origin: center; }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   .refresh-inline {
-    color: var(--accent); font-size: 14px; font-weight: 700;
+    color: var(--accent); vertical-align: middle; position: relative; top: -1px;
   }
 
   .hint-text {
@@ -222,11 +223,13 @@
             {{ f.label }}
             {% if f.from_env %}<span class="badge badge-env">Set via environment</span>{% endif %}
             {% if f.env_name == 'PLEX_URL' and not f.from_env %}
-            <button type="button" class="refresh-btn" id="discover-btn" title="Discover servers tied to this Plex account">⟳</button>
+            <button type="button" class="refresh-btn" id="discover-btn" title="Discover servers tied to this Plex account">
+              <svg viewBox="0 0 24 24" fill="none" width="12" height="12"><path stroke="currentColor" stroke-width="2.5" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/><polyline stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/></svg>
+            </button>
             {% endif %}
           </label>
           {% if f.env_name == 'PLEX_URL' and not f.from_env %}
-          <span class="hint-text">Click <span class="refresh-inline">⟳</span> to look up the Plex servers you manage</span>
+          <span class="hint-text">Click <svg class="refresh-inline" viewBox="0 0 24 24" fill="none" width="11" height="11"><path stroke="currentColor" stroke-width="3" stroke-linecap="round" d="M20 12a8 8 0 1 1-1.6-4.8"/><polyline stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="20,4 20,8 16,8"/></svg> to look up the Plex servers you manage</span>
           <select id="discover-select" style="display:none;"></select>
           <span id="discover-status" class="discover-status"></span>
           {% endif %}

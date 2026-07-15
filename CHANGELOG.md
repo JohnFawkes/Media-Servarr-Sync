@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Settings page refresh icon off-center** — the Plex server discovery refresh icon used a Unicode "⟳" glyph, which rendered visibly off-center within its circular button depending on font/browser. Replaced with an inline SVG icon (also used in the hint text next to it) that's precisely centered regardless of rendering environment.
+
 ### Added
 - **Remember me on login** — a "Remember me" checkbox on the login page makes the session cookie persistent (~31 days) instead of expiring when the browser closes.
 - **Sign in with Plex** — a "Sign in with Plex" button on the login page uses Plex.tv's PIN-based OAuth flow (no password entry), and bootstraps `PLEX_TOKEN` automatically on first sign-in if it isn't already configured. Once a server owner is configured, only that same Plex account can sign in this way.
