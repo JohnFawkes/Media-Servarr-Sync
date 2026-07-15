@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [v0.24.0] - 2026-07-15
 
 ### Fixed
 - **Settings page refresh icon off-center** — the Plex server discovery refresh icon used a Unicode "⟳" glyph, which rendered visibly off-center within its circular button depending on font/browser. Replaced with an inline SVG icon (also used in the hint text next to it) that's precisely centered regardless of rendering environment.
