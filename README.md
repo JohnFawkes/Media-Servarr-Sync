@@ -33,6 +33,8 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Health endpoint** — `/health` exposes queue depth, Plex connectivity, rclone mode, and recent sync history
 - **Stats API** — `/api/stats` returns aggregate sync counts, queue state, and last sync info — ready for [Homepage](https://gethomepage.dev) `customapi` widget
 - **Manual trigger UI** — password-protected web UI at `/` for ad-hoc scans
+- **Sign in with Plex** — log in via Plex.tv's PIN-based OAuth instead of a password; bootstraps `PLEX_TOKEN` automatically on first sign-in
+- **Settings page** — view and edit every configurable value from the web UI at `/settings`. Values already set via environment variables are shown locked (env always wins); everything else is editable and saved to `/data/settings.db`, taking effect immediately with no restart. Includes one-click Plex server discovery for the signed-in account
 - **Sync history** — paginated sync results (path, status, duration, errors) with server-side path search and status filter (All / OK / Failed)
 - **Episode display** — for Sonarr events, the episode filename (e.g. `Show.S01E01.mkv`) is shown beneath the season folder path; batch imports show an episode-count badge that reveals all individual filenames on hover (filenames wrap fully, no truncation)
 - **Quality & profile tags** — each history entry displays colour-coded tags for the file quality (blue), quality profile (green, resolved via the Sonarr/Radarr API), and any custom formats (purple); hover a tag to see its label
@@ -192,6 +194,7 @@ SECTION_MAPPING={ "/mnt/media/tv": "1", "/mnt/media/movies": "2" }
 | `/webhook/radarr` | POST | None | Radarr webhook receiver |
 | `/` | GET / POST | Session | Sync tab — manual trigger, history, Now Playing, Server Stats |
 | `/invites` | GET | Session | Invite management tab |
+| `/settings` | GET / POST | Session | View/edit config not pinned by an env var |
 | `/invite/<token>` | GET | None | Public invite landing page |
 | `/health` | GET | None | JSON health check + recent history |
 | `/api/stats` | GET | None | Aggregate sync stats for dashboards |

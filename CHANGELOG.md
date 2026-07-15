@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Settings page refresh icon off-center** — the Plex server discovery refresh icon used a Unicode "⟳" glyph, which rendered visibly off-center within its circular button depending on font/browser. Replaced with an inline SVG icon (also used in the hint text next to it) that's precisely centered regardless of rendering environment.
+
+### Added
+- **Remember me on login** — a "Remember me" checkbox on the login page makes the session cookie persistent (~31 days) instead of expiring when the browser closes.
+- **Sign in with Plex** — a "Sign in with Plex" button on the login page uses Plex.tv's PIN-based OAuth flow (no password entry), and bootstraps `PLEX_TOKEN` automatically on first sign-in if it isn't already configured. Once a server owner is configured, only that same Plex account can sign in this way.
+- **Settings page** — a new `/settings` page lets you view and edit every configurable value (Plex, Sonarr/Radarr, rclone, timing, path mappings, manual UI login, onboarding links) from the web UI instead of only via `.env`. Values already set via environment variables are shown locked/read-only (env always wins); anything else is editable and persisted to a new `/data/settings.db`, taking effect immediately without a restart. A small refresh button next to the Plex URL field looks up Plex Media Servers linked to the signed-in/entered Plex account and lists them in a dropdown to pick from.
+- **Get Token via Plex Sign-In (Settings page)** — a button next to the Plex Token field on the Settings page runs the same Plex.tv PIN sign-in flow used on the login page and fills in the token directly, no manual copy/paste needed.
+- **First-run onboarding wizard** — until a Plex token is configured, hitting the web UI for the first time shows a setup wizard instead of a bare login form: an optional step to replace the default admin password (skipped if it's already been changed or is pinned by `MANUAL_PASS`), and a step to connect Plex via "Sign in with Plex" or a manual URL/token entry. A "Skip for now" link is always available.
+
+### Changed
+- **Settings page Plex server discovery** — only lists Plex Media Servers the signed-in account owns/administers, not ones it's merely been invited to as a friend/shared user. The refresh icon is bigger and Plex-amber colored, and a visible hint line now explains what it does instead of relying on a hover tooltip alone.
+
+### Fixed
+- **compose.yaml env vars silently overriding the Settings page** — nearly every `environment:` entry used `${VAR:-default}`, so even when a value was never set in `.env`, Docker Compose baked the hardcoded default into the container's real environment. The app then saw that as "set via environment" and permanently locked the field in the Settings page, regardless of whether the user had actually configured anything. The `environment:` block has been removed entirely — `env_file: - .env` already loads every app setting directly with no interpolation or defaults, so leaving a value unset in `.env` now correctly leaves it editable in Settings.
+
+### Security
+- **liblzma5 DoS (CVE-2026-34743)** — the Docker image now runs `apt-get upgrade` during build so security patches for packages already present in the base image (not just ones this project installs directly) are picked up, fixing a medium-severity buffer-overflow DoS in `liblzma5` flagged by Trivy.
+
 ## [v0.23.3] - 2026-07-06
 
 ### Fixed
@@ -18,6 +39,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **Now Playing mini player map** — the location map was hidden when the Now Playing card was in the left-sidebar layout on wide displays. It now renders at the bottom of each session card, spanning the full card width.
+
+### Changed
+- Update dependency PlexAPI to v4.18.2
 
 ---
 

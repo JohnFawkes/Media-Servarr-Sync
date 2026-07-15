@@ -39,6 +39,7 @@ from flask import Flask, request, jsonify, render_template, session, redirect, u
 from flask_wtf.csrf import CSRFProtect
 from dotenv import load_dotenv
 from plexapi.server import PlexServer
+from plexapi.myplex import MyPlexAccount
 from plexapi.base import MediaContainer
 
 # ---------------------------------------------------------------------------
@@ -120,16 +121,6 @@ def normalize_path(path: str, is_dir: bool = True) -> str:
     return clean + '/' if is_dir else clean
 
 
-def parse_json_env(env_name: str) -> dict:
-    raw = os.getenv(env_name, "{}").strip().strip("'")
-    try:
-        data = json.loads(raw)
-        return {normalize_path(k, is_dir=False).lower(): v for k, v in data.items()}
-    except Exception as exc:
-        log.error("Failed to parse %s: %s", env_name, exc)
-        return {}
-
-
 def apply_path_mapping(path: str, mapping: dict, label: str, is_dir: bool = True) -> str:
     orig = normalize_path(path, is_dir=False)
     lower = orig.lower()
@@ -142,56 +133,139 @@ def apply_path_mapping(path: str, mapping: dict, label: str, is_dir: bool = True
 
 
 # ---------------------------------------------------------------------------
+# Settings store — DB-backed overrides for values not set via environment.
+# An env var always wins; anything left unset can be configured from the
+# Settings page instead and is persisted here.
+# ---------------------------------------------------------------------------
+
+class SettingsStore:
+    """Thread-safe SQLite-backed key/value settings store."""
+    def __init__(self, db_path: str = "/data/settings.db"):
+        self._db_path = db_path
+        self._lock = threading.Lock()
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            conn.commit()
+
+    def get(self, key: str, default: str = "") -> str:
+        with self._lock, sqlite3.connect(self._db_path) as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            return row[0] if row is not None else default
+
+    def set(self, key: str, value: str):
+        with self._lock, sqlite3.connect(self._db_path) as conn:
+            conn.execute("""
+                INSERT INTO settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, (key, value))
+            conn.commit()
+
+    def all(self) -> dict:
+        with self._lock, sqlite3.connect(self._db_path) as conn:
+            return dict(conn.execute("SELECT key, value FROM settings").fetchall())
+
+
+settings_store = SettingsStore()
+_RANDOM_SECRET_KEY = os.urandom(24).hex()  # stable fallback for this process's lifetime
+
+
+def _cfg_raw(key: str, default: str = "") -> str:
+    """Resolve a config value: environment variable wins, then the settings
+    DB, then the given default."""
+    env_val = os.environ.get(key)
+    if env_val is not None and env_val != "":
+        return env_val
+    stored = settings_store.get(key)
+    if stored:
+        return stored
+    return default
+
+
+def _cfg_is_env(key: str) -> bool:
+    """True if this key is pinned by an environment variable (locked in the UI)."""
+    val = os.environ.get(key)
+    return val is not None and val != ""
+
+
+def parse_json_env(key: str) -> dict:
+    raw = _cfg_raw(key, "{}").strip().strip("'")
+    try:
+        data = json.loads(raw)
+        return {normalize_path(k, is_dir=False).lower(): v for k, v in data.items()}
+    except Exception as exc:
+        log.error("Failed to parse %s: %s", key, exc)
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-PLEX_URL        = os.getenv("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
-PLEX_TOKEN      = os.getenv("PLEX_TOKEN", "")
-PLEX_TIMEOUT    = parse_duration(os.getenv("PLEX_TIMEOUT", "60")) or 60
-PORT            = int(os.getenv("PORT", "5000"))
-WEBHOOK_DELAY   = parse_duration(os.getenv("WEBHOOK_DELAY", "30"))
-MINIMUM_AGE     = parse_duration(os.getenv("MINIMUM_AGE", "0"))
-HISTORY_DAYS    = int(os.getenv("HISTORY_DAYS", "7"))
-SYNC_COOLDOWN   = parse_duration(os.getenv("SYNC_COOLDOWN", "5m"))
-MANUAL_USER     = os.getenv("MANUAL_USER", "admin")
-MANUAL_PASS     = os.getenv("MANUAL_PASS", "password")
-# Used to sign session cookies — set a long random string in your .env
-SECRET_KEY      = os.getenv("SECRET_KEY", os.urandom(24).hex())
-# Demo mode: enables /login/demo and populates pages with fake data for screenshots
-DEMO_MODE       = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "yes")
+# PORT and DEMO_MODE are process/deploy-level — bound at startup, not
+# editable from the Settings page (would need a restart to take effect).
+PORT      = int(os.getenv("PORT", "5000"))
+DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "yes")
 
-# Optional Sonarr/Radarr API credentials — used to look up quality profile names.
-# If unset, quality_profile badges are simply omitted.
-SONARR_URL     = os.getenv("SONARR_URL", "").rstrip('/')
-SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
-RADARR_URL     = os.getenv("RADARR_URL", "").rstrip('/')
-RADARR_API_KEY = os.getenv("RADARR_API_KEY", "")
 
-# Onboarding / offboarding links shown on the invite page
-ONBOARD_WIKI_URL    = os.getenv("ONBOARD_WIKI_URL", "").rstrip('/')
-ONBOARD_REQUEST_URL = os.getenv("ONBOARD_REQUEST_URL", "").rstrip('/')
+def load_config():
+    """(Re)load all env/DB-backed configuration into module globals. Called
+    once at startup and again after a Settings page save so changes take
+    effect immediately without a process restart."""
+    global PLEX_URL, PLEX_TOKEN, PLEX_TIMEOUT, WEBHOOK_DELAY, MINIMUM_AGE, \
+        HISTORY_DAYS, SYNC_COOLDOWN, MANUAL_USER, MANUAL_PASS, SECRET_KEY, \
+        SONARR_URL, SONARR_API_KEY, RADARR_URL, RADARR_API_KEY, \
+        ONBOARD_WIKI_URL, ONBOARD_REQUEST_URL, USE_RCLONE, RCLONE_RC_URL, \
+        RCLONE_RC_USER, RCLONE_RC_PASS, RCLONE_MOUNT_ROOT, PLEX_IDENTIFIER, \
+        PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING
 
-# Rclone — set USE_RCLONE=false to skip all rclone calls entirely
-USE_RCLONE        = os.getenv("USE_RCLONE", "false").strip().lower() in ("1", "true", "yes")
-RCLONE_RC_URL     = os.getenv("RCLONE_RC_URL", "").rstrip('/')
-RCLONE_RC_USER    = os.getenv("RCLONE_RC_USER", "")
-RCLONE_RC_PASS    = os.getenv("RCLONE_RC_PASS", "")
-RCLONE_MOUNT_ROOT = os.getenv("RCLONE_MOUNT_ROOT", "").rstrip('/')
+    PLEX_URL        = _cfg_raw("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
+    PLEX_TOKEN      = _cfg_raw("PLEX_TOKEN", "")
+    PLEX_TIMEOUT    = parse_duration(_cfg_raw("PLEX_TIMEOUT", "60")) or 60
+    WEBHOOK_DELAY   = parse_duration(_cfg_raw("WEBHOOK_DELAY", "30"))
+    MINIMUM_AGE     = parse_duration(_cfg_raw("MINIMUM_AGE", "0"))
+    HISTORY_DAYS    = int(_cfg_raw("HISTORY_DAYS", "7"))
+    SYNC_COOLDOWN   = parse_duration(_cfg_raw("SYNC_COOLDOWN", "5m"))
+    MANUAL_USER     = _cfg_raw("MANUAL_USER", "admin")
+    MANUAL_PASS     = _cfg_raw("MANUAL_PASS", "password")
+    # Used to sign session cookies — set a long random string in your .env or Settings
+    SECRET_KEY      = _cfg_raw("SECRET_KEY", "") or _RANDOM_SECRET_KEY
 
-plexapi.TIMEOUT = PLEX_TIMEOUT
+    # Optional Sonarr/Radarr API credentials — used to look up quality profile names.
+    # If unset, quality_profile badges are simply omitted.
+    SONARR_URL     = _cfg_raw("SONARR_URL", "").rstrip('/')
+    SONARR_API_KEY = _cfg_raw("SONARR_API_KEY", "")
+    RADARR_URL     = _cfg_raw("RADARR_URL", "").rstrip('/')
+    RADARR_API_KEY = _cfg_raw("RADARR_API_KEY", "")
 
-# PlexAPI reads PLEXAPI_HEADER_IDENTIFIER from the environment automatically on import.
-# We set it explicitly here as well so it's always applied regardless of import order.
-PLEX_IDENTIFIER           = os.getenv("PLEXAPI_HEADER_IDENTIFIER", "media-servarr-sync")
-plexapi.X_PLEX_IDENTIFIER = PLEX_IDENTIFIER
-plexapi.X_PLEX_PRODUCT    = PLEX_IDENTIFIER
+    # Onboarding / offboarding links shown on the invite page
+    ONBOARD_WIKI_URL    = _cfg_raw("ONBOARD_WIKI_URL", "").rstrip('/')
+    ONBOARD_REQUEST_URL = _cfg_raw("ONBOARD_REQUEST_URL", "").rstrip('/')
 
-PATH_REPLACEMENTS        = parse_json_env("PATH_REPLACEMENTS")
-RCLONE_PATH_REPLACEMENTS = parse_json_env("RCLONE_PATH_REPLACEMENTS")
-SECTION_MAPPING          = parse_json_env("SECTION_MAPPING")
+    # Rclone — set USE_RCLONE=false to skip all rclone calls entirely
+    USE_RCLONE        = _cfg_raw("USE_RCLONE", "false").strip().lower() in ("1", "true", "yes")
+    RCLONE_RC_URL     = _cfg_raw("RCLONE_RC_URL", "").rstrip('/')
+    RCLONE_RC_USER    = _cfg_raw("RCLONE_RC_USER", "")
+    RCLONE_RC_PASS    = _cfg_raw("RCLONE_RC_PASS", "")
+    RCLONE_MOUNT_ROOT = _cfg_raw("RCLONE_MOUNT_ROOT", "").rstrip('/')
 
-# Apply secret key now that config is loaded
-app.secret_key = SECRET_KEY
+    plexapi.TIMEOUT = PLEX_TIMEOUT
+
+    # PlexAPI reads PLEXAPI_HEADER_IDENTIFIER from the environment automatically on import.
+    # We set it explicitly here as well so it's always applied regardless of import order.
+    PLEX_IDENTIFIER           = _cfg_raw("PLEXAPI_HEADER_IDENTIFIER", "media-servarr-sync")
+    plexapi.X_PLEX_IDENTIFIER = PLEX_IDENTIFIER
+    plexapi.X_PLEX_PRODUCT    = PLEX_IDENTIFIER
+
+    PATH_REPLACEMENTS        = parse_json_env("PATH_REPLACEMENTS")
+    RCLONE_PATH_REPLACEMENTS = parse_json_env("RCLONE_PATH_REPLACEMENTS")
+    SECTION_MAPPING          = parse_json_env("SECTION_MAPPING")
+
+    # Apply secret key now that config is loaded
+    app.secret_key = SECRET_KEY
+
+
+load_config()
 
 
 # ---------------------------------------------------------------------------
@@ -1563,18 +1637,168 @@ def login_demo():
     return redirect(url_for('manual_webhook'))
 
 
+def _onboarding_needed() -> bool:
+    """True when this instance has never been connected to Plex — used to
+    show a first-run setup wizard instead of a bare login form."""
+    return not PLEX_TOKEN
+
+
+@app.route('/onboarding', methods=['GET', 'POST'])
+def onboarding():
+    """First-run setup wizard: set an admin password and connect Plex,
+    shown instead of the login page until a Plex token is configured."""
+    if PLEX_TOKEN:
+        return redirect(url_for('login'))
+
+    message = ""
+    msg_class = "info"
+    if request.method == 'POST':
+        step = request.form.get('step', '')
+        if step == 'password':
+            new_pass = request.form.get('new_password', '').strip()
+            if not _cfg_is_env('MANUAL_PASS') and new_pass:
+                settings_store.set('MANUAL_PASS', new_pass)
+                load_config()
+            return redirect(url_for('onboarding'))
+        elif step == 'plex_manual':
+            url = request.form.get('plex_url', '').strip()
+            token = request.form.get('plex_token', '').strip()
+            if not token:
+                message = "Plex token is required"
+                msg_class = "error"
+            else:
+                if not _cfg_is_env('PLEX_URL') and url:
+                    settings_store.set('PLEX_URL', url)
+                if not _cfg_is_env('PLEX_TOKEN'):
+                    settings_store.set('PLEX_TOKEN', token)
+                load_config()
+                invalidate_plex()
+                return redirect(url_for('login'))
+
+    return render_template(
+        'onboarding.html', message=message, msg_class=msg_class,
+        manual_pass_locked=_cfg_is_env('MANUAL_PASS'),
+        using_default_pass=(MANUAL_PASS == "password"),
+    )
+
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if request.method == 'GET' and _onboarding_needed():
+        return redirect(url_for('onboarding'))
     error = ""
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         if username == MANUAL_USER and password == MANUAL_PASS:
-            session.permanent = False
+            session.permanent = bool(request.form.get('remember_me'))
             session['authenticated'] = True
             return redirect(url_for('manual_webhook'))
         error = "Invalid username or password."
     return render_template('login.html', error=error)
+
+
+@app.route('/auth/plex/start', methods=['POST'])
+@csrf.exempt
+def auth_plex_start():
+    """Create a Plex.tv PIN and return the auth URL for the login popup."""
+    try:
+        r = requests.post(
+            "https://plex.tv/api/v2/pins", params={"strong": "true"},
+            headers={
+                "X-Plex-Client-Identifier": PLEX_IDENTIFIER,
+                "X-Plex-Product": PLEX_IDENTIFIER,
+                "Accept": "application/json",
+            }, timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except requests.RequestException as exc:
+        log.error("[AUTH] Failed to create Plex PIN: %s", exc)
+        return jsonify({"error": "Could not reach plex.tv"}), 502
+
+    auth_url = (
+        "https://app.plex.tv/auth#?"
+        + urllib.parse.urlencode({
+            "clientID": PLEX_IDENTIFIER,
+            "code": data["code"],
+            "context[device][product]": PLEX_IDENTIFIER,
+        })
+    )
+    return jsonify({"id": data["id"], "auth_url": auth_url})
+
+
+def _poll_plex_pin(pin_id: str):
+    """Poll a Plex.tv PIN. Returns (token_or_None, error_response_or_None)."""
+    try:
+        r = requests.get(
+            f"https://plex.tv/api/v2/pins/{pin_id}",
+            headers={
+                "X-Plex-Client-Identifier": PLEX_IDENTIFIER,
+                "Accept": "application/json",
+            }, timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except requests.RequestException as exc:
+        log.error("[AUTH] Failed to poll Plex PIN: %s", exc)
+        return None, (jsonify({"error": "Could not reach plex.tv"}), 502)
+    return data.get("authToken"), None
+
+
+@app.route('/auth/plex/poll', methods=['GET'])
+def auth_plex_poll():
+    """Poll a Plex.tv PIN for completion; log the session in once claimed."""
+    pin_id = request.args.get('id', '').strip()
+    if not pin_id:
+        return jsonify({"error": "id required"}), 400
+    new_token, error = _poll_plex_pin(pin_id)
+    if error:
+        return error
+    if not new_token:
+        return jsonify({"authenticated": False})
+
+    # If a Plex account is already configured, only allow that same account
+    # to sign in — otherwise any Plex user could log into the admin panel.
+    existing_token = PLEX_TOKEN
+    if existing_token:
+        try:
+            new_account = MyPlexAccount(token=new_token)
+            existing_account = MyPlexAccount(token=existing_token)
+            if new_account.uuid != existing_account.uuid:
+                log.warning("[AUTH] Plex login from a different account was rejected")
+                return jsonify({"error": "This Plex account doesn't match the configured server owner"}), 403
+        except Exception as exc:
+            log.error("[AUTH] Failed to verify Plex account: %s", exc)
+            return jsonify({"error": "Could not verify Plex account"}), 502
+    elif not _cfg_is_env("PLEX_TOKEN"):
+        # No account configured yet — bootstrap PLEX_TOKEN from this login.
+        settings_store.set("PLEX_TOKEN", new_token)
+        load_config()
+        invalidate_plex()
+        log.info("[AUTH] PLEX_TOKEN set from Plex sign-in")
+
+    session.permanent = True
+    session['authenticated'] = True
+    return jsonify({"authenticated": True})
+
+
+@app.route('/api/plex/token/poll', methods=['GET'])
+@requires_auth
+def api_plex_token_poll():
+    """Poll a Plex.tv PIN and return the raw token once claimed, for the
+    Settings page's 'Get Token via Plex Sign-In' button. The caller is
+    already an authenticated admin, so no account-matching is enforced —
+    the point of this button is to let them pick whichever account they want."""
+    pin_id = request.args.get('id', '').strip()
+    if not pin_id:
+        return jsonify({"error": "id required"}), 400
+    token, error = _poll_plex_pin(pin_id)
+    if error:
+        return error
+    if not token:
+        return jsonify({"token": None})
+    return jsonify({"token": token})
 
 
 @app.route('/logout')
@@ -2110,6 +2334,130 @@ def api_libraries():
     except Exception as exc:
         log.error("[LIBRARIES] Failed to fetch Plex library sections: %s", exc)
         return jsonify({'error': 'Failed to fetch libraries', 'libraries': []}), 500
+
+
+# ---------------------------------------------------------------------------
+# Settings page
+# ---------------------------------------------------------------------------
+
+# (env_name, global_name, label, kind, group, placeholder)
+# kind: text | password | url | duration | int | bool | json
+SETTINGS_SPEC = [
+    ("PLEX_URL", "PLEX_URL", "Plex URL", "url", "Plex Server", "http://192.168.1.100:32400"),
+    ("PLEX_TOKEN", "PLEX_TOKEN", "Plex Token", "password", "Plex Server", "your-plex-token"),
+    ("PLEXAPI_HEADER_IDENTIFIER", "PLEX_IDENTIFIER", "Client Identifier", "text", "Plex Server", "media-servarr-sync"),
+    ("PLEX_TIMEOUT", "PLEX_TIMEOUT", "Plex Timeout", "duration", "Plex Server", "60"),
+
+    ("SONARR_URL", "SONARR_URL", "Sonarr URL", "url", "Sonarr / Radarr", "http://192.168.1.100:8989"),
+    ("SONARR_API_KEY", "SONARR_API_KEY", "Sonarr API Key", "password", "Sonarr / Radarr", ""),
+    ("RADARR_URL", "RADARR_URL", "Radarr URL", "url", "Sonarr / Radarr", "http://192.168.1.100:7878"),
+    ("RADARR_API_KEY", "RADARR_API_KEY", "Radarr API Key", "password", "Sonarr / Radarr", ""),
+
+    ("USE_RCLONE", "USE_RCLONE", "Enable Rclone", "bool", "Rclone", ""),
+    ("RCLONE_RC_URL", "RCLONE_RC_URL", "Rclone RC URL", "url", "Rclone", "http://192.168.1.100:5572"),
+    ("RCLONE_RC_USER", "RCLONE_RC_USER", "Rclone RC User", "text", "Rclone", ""),
+    ("RCLONE_RC_PASS", "RCLONE_RC_PASS", "Rclone RC Password", "password", "Rclone", ""),
+    ("RCLONE_MOUNT_ROOT", "RCLONE_MOUNT_ROOT", "Rclone Mount Root", "text", "Rclone", "/mnt/media"),
+
+    ("WEBHOOK_DELAY", "WEBHOOK_DELAY", "Webhook Delay", "duration", "Timing", "30s"),
+    ("MINIMUM_AGE", "MINIMUM_AGE", "Minimum File Age", "duration", "Timing", "0"),
+    ("SYNC_COOLDOWN", "SYNC_COOLDOWN", "Sync Cooldown", "duration", "Timing", "5m"),
+    ("HISTORY_DAYS", "HISTORY_DAYS", "History Retention (days)", "int", "Timing", "7"),
+
+    ("PATH_REPLACEMENTS", "PATH_REPLACEMENTS", "Path Replacements", "json", "Path Mappings",
+     '{ "/data/tv": "/mnt/media/tv" }'),
+    ("RCLONE_PATH_REPLACEMENTS", "RCLONE_PATH_REPLACEMENTS", "Rclone Path Replacements", "json", "Path Mappings",
+     '{ "/data/tv": "/mnt/media/tv" }'),
+    ("SECTION_MAPPING", "SECTION_MAPPING", "Plex Section Mapping", "json", "Path Mappings",
+     '{ "/mnt/media/tv": "1" }'),
+
+    ("MANUAL_USER", "MANUAL_USER", "Username", "text", "Manual UI Login", "admin"),
+    ("MANUAL_PASS", "MANUAL_PASS", "Password", "password", "Manual UI Login", ""),
+    ("SECRET_KEY", "SECRET_KEY", "Session Secret Key", "password", "Manual UI Login", ""),
+
+    ("ONBOARD_WIKI_URL", "ONBOARD_WIKI_URL", "Wiki / Setup Guide URL", "url", "Onboarding Links", ""),
+    ("ONBOARD_REQUEST_URL", "ONBOARD_REQUEST_URL", "Content Request URL", "url", "Onboarding Links", ""),
+]
+
+
+def _settings_view_model() -> list:
+    """Build the grouped settings list for the Settings page template."""
+    groups = {}
+    for env_name, global_name, label, kind, group, placeholder in SETTINGS_SPEC:
+        value = globals().get(global_name, "")
+        if kind == "json" and isinstance(value, dict):
+            value = json.dumps(value, indent=2)
+        groups.setdefault(group, []).append({
+            "env_name": env_name,
+            "label": label,
+            "kind": kind,
+            "placeholder": placeholder,
+            "value": value,
+            "from_env": _cfg_is_env(env_name),
+        })
+    return [{"name": name, "fields": fields} for name, fields in groups.items()]
+
+
+@app.route('/settings', methods=['GET', 'POST'])
+@requires_auth
+def settings_page():
+    message = ""
+    msg_class = "info"
+
+    if request.method == 'POST':
+        for env_name, _global_name, _label, kind, _group, _placeholder in SETTINGS_SPEC:
+            if _cfg_is_env(env_name):
+                continue  # locked — env var always wins, ignore any submitted value
+            raw = request.form.get(env_name, "")
+            if kind == "bool":
+                raw = "true" if request.form.get(env_name) else "false"
+            elif kind == "json":
+                raw = raw.strip() or "{}"
+                try:
+                    json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    message = f"✗ Invalid JSON for {_label}"
+                    msg_class = "error"
+                    break
+            settings_store.set(env_name, raw)
+        else:
+            load_config()
+            invalidate_plex()
+            message = "✓ Settings saved"
+            msg_class = "success"
+
+    return render_template('settings.html', groups=_settings_view_model(),
+                            message=message, msg_class=msg_class)
+
+
+@app.route('/api/plex/discover', methods=['POST'])
+@csrf.exempt
+@requires_auth
+def api_plex_discover():
+    """List Plex Media Server resources tied to the account behind the
+    current (or a candidate) Plex token, for the Settings page picker."""
+    body = request.get_json(silent=True) or {}
+    token = body.get('token') or PLEX_TOKEN
+    if not token:
+        return jsonify({'error': 'No Plex token available yet — sign in or enter a token first'}), 400
+    try:
+        account = MyPlexAccount(token=token)
+        servers = []
+        for resource in account.resources():
+            if 'server' not in (resource.provides or '').split(','):
+                continue
+            if not resource.owned:
+                continue  # skip servers shared with this account, not owned/administered by it
+            connections = [
+                {'uri': c.uri, 'local': c.local, 'address': c.address, 'port': c.port}
+                for c in resource.connections
+            ]
+            servers.append({'name': resource.name, 'client_identifier': resource.clientIdentifier,
+                             'connections': connections})
+        return jsonify({'servers': servers})
+    except Exception as exc:
+        log.error("[SETTINGS] Plex server discovery failed: %s", exc)
+        return jsonify({'error': 'Failed to fetch servers from plex.tv'}), 502
 
 
 _TILE_CACHE_DIR = "/data/tile_cache"
