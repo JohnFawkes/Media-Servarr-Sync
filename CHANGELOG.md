@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **`:dev` Docker tag disappearing after release builds** — the old `cleanup-packages.yml` workflow deleted "untagged" GHCR package versions after every master build, but `actions/delete-package-versions`' untagged detection doesn't reliably account for multi-arch images (a tagged manifest index's per-platform child manifests are technically untagged versions of their own), so it could delete a manifest a live tag still pointed to — breaking `docker pull ...:dev` with "manifest unknown" right after a release. The workflow has been replaced: it now only runs when a PR closes, and only deletes the single, exact GHCR package version matching that PR's own preview image tag (built by `pr-docker.yml`), found by precise tag match — it can no longer touch `dev`, `latest`, or any versioned release tag.
+
 ## [v0.24.0] - 2026-07-15
 
 ### Fixed
