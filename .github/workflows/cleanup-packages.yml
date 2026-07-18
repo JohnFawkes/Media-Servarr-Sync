@@ -1,18 +1,21 @@
-name: Cleanup Untagged Package Versions
+name: Cleanup PR Docker Image
 
-# Runs after every push to main/master (i.e. after each release build tags a new image)
-# and on a weekly schedule to catch anything that slipped through.
-# Can also be triggered manually.
+# Deletes the GHCR image tagged with a PR's branch name (built by
+# pr-docker.yml) once that PR is closed — merged or not.
+#
+# NOTE: this intentionally does NOT do broad "delete untagged versions"
+# cleanup. actions/delete-package-versions' delete-only-untagged-versions
+# option has a known issue where it can delete manifests that a live tag
+# (e.g. "dev", "latest") still references, since multi-arch images store
+# per-platform manifests as separate, technically-untagged package
+# versions underneath a tagged index. That previously broke the "dev" tag
+# in this repo. This workflow only ever targets the single, precise
+# package version matching the PR's own preview tag, found by exact tag
+# match, so it can't touch anything else.
+
 on:
-  workflow_run:
-    workflows: ["Docker Build & Publish"]
-    branches: ["main", "master"]
-    types: [completed]
-
-  schedule:
-    - cron: "0 3 * * 0"   # every Sunday at 03:00 UTC
-
-  workflow_dispatch:
+  pull_request:
+    types: [closed]
 
 jobs:
   cleanup:
@@ -21,12 +24,39 @@ jobs:
       packages: write
 
     steps:
-      - name: Delete untagged package versions
+      - name: Sanitise branch name for Docker tag
+        id: branch
+        run: |
+          TAG=$(echo "${{ github.head_ref }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\{2,\}/-/g' | sed 's/^-//;s/-$//')
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Find the package version for this PR's tag
+        id: find
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const tag = '${{ steps.branch.outputs.tag }}';
+            const packageName = 'media-servarr-sync';
+            const owner = context.repo.owner;
+
+            const versions = await github.paginate(
+              github.rest.packages.getAllPackageVersionsForPackageOwnedByUser,
+              { package_type: 'container', package_name: packageName, username: owner, per_page: 100 }
+            );
+
+            const match = versions.find(v => (v.metadata?.container?.tags || []).includes(tag));
+            if (!match) {
+              core.info(`No package version found for tag '${tag}' — nothing to clean up.`);
+              core.setOutput('version_id', '');
+              return;
+            }
+            core.info(`Found package version ${match.id} for tag '${tag}'`);
+            core.setOutput('version_id', String(match.id));
+
+      - name: Delete the PR's preview image
+        if: steps.find.outputs.version_id != ''
         uses: actions/delete-package-versions@v5
         with:
           package-name: media-servarr-sync
           package-type: container
-          delete-only-untagged-versions: true
-          # Keep the most recent 5 untagged digests in case a build is
-          # still in progress or a rollback is needed within the same day.
-          min-versions-to-keep: 5
+          package-version-ids: '["${{ steps.find.outputs.version_id }}"]'
