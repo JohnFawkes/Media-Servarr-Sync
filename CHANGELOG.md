@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **First-run onboarding wizard** — until a Plex token is configured, hitting the web UI for the first time shows a setup wizard instead of a bare login form: an optional step to replace the default admin password (skipped if it's already been changed or is pinned by `MANUAL_PASS`), and a step to connect Plex via "Sign in with Plex" or a manual URL/token entry. A "Skip for now" link is always available.
 
 ### Changed
+- Update dependency python-dotenv to v1.2.3
 - Update dependency sigstore/cosign to v3
 - Update dependency sigstore/cosign to v2.6.5
 - **Settings page Plex server discovery** — only lists Plex Media Servers the signed-in account owns/administers, not ones it's merely been invited to as a friend/shared user. The refresh icon is bigger and Plex-amber colored, and a visible hint line now explains what it does instead of relying on a hover tooltip alone.
