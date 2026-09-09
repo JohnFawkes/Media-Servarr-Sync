@@ -854,24 +854,38 @@ def requires_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get('authenticated'):
-            return redirect(url_for('login', next=request.full_path if request.query_string else request.path))
+            return redirect(url_for('login', next=request.path))
         return f(*args, **kwargs)
     return decorated
 
 
+# Endpoints that would defeat the point of redirecting back after a login.
+_NEXT_URL_DENY = {'login', 'logout', 'onboarding'}
+
+
 def safe_next_url(candidate: str, fallback_endpoint: str = 'manual_webhook') -> str:
-    """Return `candidate` if it is a safe same-site relative path, else the
-    fallback route. Guards the post-login redirect against open redirects
-    ('//evil.example', 'https://evil.example', backslash-scheme tricks)."""
+    """Resolve `candidate` to a route this app actually serves.
+
+    The value returned is always built by url_for() from an endpoint name
+    matched against our own URL map — the caller's text is never echoed into
+    the redirect — so a crafted `next` cannot send the user off-site.
+    """
     default = url_for(fallback_endpoint)
     if not candidate:
         return default
-    candidate = candidate.strip()
-    if not candidate.startswith('/') or candidate.startswith('//') or candidate.startswith('/\\'):
+    path = urllib.parse.urlsplit(candidate.strip()).path
+    if not path.startswith('/') or path.startswith('//'):
         return default
-    if urllib.parse.urlsplit(candidate).scheme or urllib.parse.urlsplit(candidate).netloc:
+    try:
+        endpoint, values = app.url_map.bind(request.host).match(path, method='GET')
+    except Exception:
         return default
-    return candidate
+    if endpoint in _NEXT_URL_DENY:
+        return default
+    try:
+        return url_for(endpoint, **values)
+    except Exception:
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -925,6 +939,15 @@ def rclone_vfs_refresh(host_path: str, label: str):
 _NOTIFY_TIMEOUT = 10
 
 
+def _host_is(host: str, *domains: str) -> bool:
+    """True when `host` is exactly one of `domains`, or a subdomain of one.
+
+    A substring test would accept `discord.com.example.net` as Discord, so
+    every comparison is anchored to a full label boundary.
+    """
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
 def _notify_provider(url: str) -> str:
     """Infer the notification service from its URL.
 
@@ -938,13 +961,13 @@ def _notify_provider(url: str) -> str:
     except ValueError:
         return "generic"
     host, path = (parts.hostname or "").lower(), (parts.path or "").lower()
-    if "discord.com" in host or "discordapp.com" in host:
+    if _host_is(host, "discord.com", "discordapp.com"):
         return "discord"
-    if "hooks.slack.com" in host:
+    if _host_is(host, "hooks.slack.com"):
         return "slack"
     if path.rstrip("/").endswith("/message"):
         return "gotify"
-    if "ntfy" in host:
+    if _host_is(host, "ntfy.sh") or "ntfy" in host.split("."):
         return "ntfy"
     return "generic"
 
@@ -2785,33 +2808,28 @@ def settings_page():
             message = "✓ Settings saved"
             msg_class = "success"
 
+            # "Save & Send Test" — notify using the configuration that was
+            # just persisted, so the URL POSTed to is always a validated
+            # config value rather than a string off the wire.
+            if request.form.get('action') == 'save_and_test':
+                if not NOTIFY_URL:
+                    message = "✓ Settings saved — set a Notification URL to send a test"
+                    msg_class = "warn"
+                else:
+                    sent, detail = send_notification({
+                        "test": True,
+                        "status": "ok",
+                        "label": "TEST",
+                        "ts": now_local().isoformat(),
+                    })
+                    if sent:
+                        message = f"✓ Settings saved — test notification sent via {detail}"
+                    else:
+                        message = f"✓ Settings saved, but the test notification failed: {detail}"
+                        msg_class = "warn"
+
     return render_template('settings.html', groups=_settings_view_model(),
                             message=message, msg_class=msg_class)
-
-
-@app.route('/api/notify/test', methods=['POST'])
-@csrf.exempt
-@requires_auth
-def api_notify_test():
-    """Send a test notification, so the Settings page can verify a webhook
-    URL before it's saved. Falls back to the stored NOTIFY_URL when the
-    request doesn't carry one."""
-    body = request.get_json(silent=True) or {}
-    url = (body.get('url') or NOTIFY_URL or '').strip()
-    if not url:
-        return jsonify({'error': 'Enter a notification URL first'}), 400
-    if not url.lower().startswith(('http://', 'https://')):
-        return jsonify({'error': 'Notification URL must start with http:// or https://'}), 400
-
-    ok, detail = send_notification({
-        'test': True,
-        'status': 'ok',
-        'label': 'TEST',
-        'ts': now_local().isoformat(),
-    }, url=url)
-    if not ok:
-        return jsonify({'error': detail}), 502
-    return jsonify({'status': 'sent', 'provider': detail})
 
 
 @app.route('/api/plex/discover', methods=['POST'])

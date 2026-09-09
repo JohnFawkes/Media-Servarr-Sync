@@ -30,7 +30,7 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Configurable delay** — wait N seconds after the webhook before scanning (gives Sonarr/Radarr time to finish writing)
 - **Minimum file age** — optionally hold off scanning until a file is at least N seconds old
 - **Retry on timeout** — Plex scan attempts retry up to 3 times with automatic reconnection on stale sessions
-- **Notifications** — POST a summary of every sync (or just the failures) to Discord, Slack, Gotify, ntfy, or any webhook that accepts JSON; the service is detected from the URL and a **Send Test Notification** button on the Settings page verifies it before you save
+- **Notifications** — POST a summary of every sync (or just the failures) to Discord, Slack, Gotify, ntfy, or any webhook that accepts JSON; the service is detected from the URL, and a **Save & Send Test** button on the Settings page confirms it works
 - **Health endpoint** — `/health` exposes queue depth, Plex connectivity, rclone mode, and recent sync history
 - **Stats API** — `/api/stats` returns aggregate sync counts, queue state, and last sync info — ready for [Homepage](https://gethomepage.dev) `customapi` widget
 - **Manual trigger UI** — password-protected web UI at `/` for ad-hoc scans
@@ -160,9 +160,9 @@ The service is inferred from the URL, so there's nothing else to configure:
 Notifications are dispatched on a background thread, so a slow or unreachable
 webhook never delays a scan — a delivery failure is logged and dropped.
 
-The Settings page has a **Send Test Notification** button that posts a test
-message to whatever URL is currently in the field, so you can check a webhook
-before saving it.
+The Settings page has a **Save & Send Test** button that saves your settings and
+then fires a test notification using the URL it just stored, so you can confirm a
+webhook works end to end.
 
 The generic (non-Discord/Slack/Gotify/ntfy) payload:
 
@@ -252,7 +252,6 @@ SECTION_MAPPING={ "/mnt/media/tv": "1", "/mnt/media/movies": "2" }
 | `/health` | GET | None | JSON health check + recent history |
 | `/api/stats` | GET | None | Aggregate sync stats for dashboards |
 | `/api/server-stats` | GET | Session | Plex server CPU, RAM, and bandwidth stats |
-| `/api/notify/test` | POST | Session | Send a test notification to a webhook URL |
 
 ### Health response example
 

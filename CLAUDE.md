@@ -63,7 +63,7 @@ templates/
 - **`SyncHistory`** — SQLite3 history at `/data/history.db`; handles dedup and cooldown
 - **`SettingsStore`** — SQLite3 key/value store at `/data/settings.db`. `load_config()` resolves each config value as env var → DB setting → default, and is re-run after a Settings page save to hot-reload without a restart. Fields pinned by an env var are locked (read-only) in the Settings UI.
 - **Background worker** (`sync_worker`) — drains the queue with configurable `WEBHOOK_DELAY`
-- **Notifications** — `notify_sync_result()` is called from `sync_worker` with the same dict written to history. It honours `NOTIFY_ON` and dispatches `send_notification()` on a daemon thread so webhook latency never blocks a scan. `_notify_provider()` infers Discord/Slack/Gotify/ntfy from the URL (host or `/message` path) and `_notification_payload()` shapes the body per provider; anything unrecognised gets a generic structured JSON POST
+- **Notifications** — `notify_sync_result()` is called from `sync_worker` with the same dict written to history. It honours `NOTIFY_ON` and dispatches `send_notification()` on a daemon thread so webhook latency never blocks a scan. `_notify_provider()` infers Discord/Slack/Gotify/ntfy from the URL (host or `/message` path) and `_notification_payload()` shapes the body per provider; anything unrecognised gets a generic structured JSON POST. The URL POSTed to always comes from validated config, never from a request body — the Settings form's `action=save_and_test` button saves first, then notifies
 - **Settings validation** — `_validate_setting()` checks every submitted field (`json`, `int`, `duration`, `choice`) *before* anything is written, so a save is all-or-nothing. `SETTINGS_CHOICES` supplies the options for `choice` fields
 - **Path prefix matching** — `path_has_prefix()` is the only correct way to test a path against a `SECTION_MAPPING` / `PATH_REPLACEMENTS` key; a bare `str.startswith` matches mid-segment (`/mnt/media/tv` vs `/mnt/media/tv4k`). Use `safe_int()` for anything user-supplied that must be an integer — `load_config()` runs at import, so a raising conversion there prevents startup entirely
 - **Deduplication** — duplicate webhooks for the same folder are merged while a task is in-flight
@@ -99,7 +99,6 @@ templates/
 | `/api/libraries` | GET | session | List Plex library sections |
 | `/api/geoip` | GET | session | Server-side IP geolocation proxy (cached) |
 | `/api/maptile/<z>/<x>/<y>.png` | GET | session | Proxy + 24 h disk cache for OpenStreetMap tiles |
-| `/api/notify/test` | POST | session (CSRF exempt) | Send a test notification to a webhook URL |
 | `/api/server-stats` | GET | session | Plex server CPU / RAM / bandwidth stats |
 | `/api/plex-update` | GET | session | Whether a Plex Media Server update is available (cached 1 h) |
 | `/api/thumb` | GET | session | Proxy Plex artwork thumbnails |
