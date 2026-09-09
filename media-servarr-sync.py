@@ -243,6 +243,10 @@ def parse_json_env(key: str) -> dict:
 PORT      = int(os.getenv("PORT", "5000"))
 DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "yes")
 
+# Accepted NOTIFY_ON values — defined here because load_config() runs at import,
+# before the notification helpers further down are reached.
+NOTIFY_ON_CHOICES = ("error", "all", "off")
+
 
 def load_config():
     """(Re)load all env/DB-backed configuration into module globals. Called
@@ -253,7 +257,8 @@ def load_config():
         SONARR_URL, SONARR_API_KEY, RADARR_URL, RADARR_API_KEY, \
         ONBOARD_WIKI_URL, ONBOARD_REQUEST_URL, USE_RCLONE, RCLONE_RC_URL, \
         RCLONE_RC_USER, RCLONE_RC_PASS, RCLONE_MOUNT_ROOT, PLEX_IDENTIFIER, \
-        PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING
+        PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING, \
+        NOTIFY_URL, NOTIFY_ON
 
     PLEX_URL        = _cfg_raw("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
     PLEX_TOKEN      = _cfg_raw("PLEX_TOKEN", "")
@@ -277,6 +282,14 @@ def load_config():
     # Onboarding / offboarding links shown on the invite page
     ONBOARD_WIKI_URL    = _cfg_raw("ONBOARD_WIKI_URL", "").rstrip('/')
     ONBOARD_REQUEST_URL = _cfg_raw("ONBOARD_REQUEST_URL", "").rstrip('/')
+
+    # Notifications — POST a summary to Discord/Slack/Gotify/ntfy/any webhook
+    # when a sync finishes. NOTIFY_ON: 'error' (default), 'all', or 'off'.
+    NOTIFY_URL = _cfg_raw("NOTIFY_URL", "").strip()
+    NOTIFY_ON  = _cfg_raw("NOTIFY_ON", "error").strip().lower()
+    if NOTIFY_ON not in NOTIFY_ON_CHOICES:
+        log.warning("Unknown NOTIFY_ON value %r — falling back to 'error'", NOTIFY_ON)
+        NOTIFY_ON = "error"
 
     # Rclone — set USE_RCLONE=false to skip all rclone calls entirely
     USE_RCLONE        = _cfg_raw("USE_RCLONE", "false").strip().lower() in ("1", "true", "yes")
@@ -903,6 +916,161 @@ def rclone_vfs_refresh(host_path: str, label: str):
 
 
 # ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+# A sync failure is otherwise invisible until somebody opens the dashboard.
+# NOTIFY_URL points at a Discord/Slack/Gotify/ntfy webhook (or any endpoint
+# that accepts a JSON POST); NOTIFY_ON decides which results are worth sending.
+
+_NOTIFY_TIMEOUT = 10
+
+
+def _notify_provider(url: str) -> str:
+    """Infer the notification service from its URL.
+
+    Detection is intentionally simple and documented in the README so users can
+    predict it: Discord and Slack are matched on their webhook hostnames,
+    Gotify on its '/message' endpoint, ntfy on 'ntfy' appearing in the host.
+    Anything else gets a plain JSON POST.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "generic"
+    host, path = (parts.hostname or "").lower(), (parts.path or "").lower()
+    if "discord.com" in host or "discordapp.com" in host:
+        return "discord"
+    if "hooks.slack.com" in host:
+        return "slack"
+    if path.rstrip("/").endswith("/message"):
+        return "gotify"
+    if "ntfy" in host:
+        return "ntfy"
+    return "generic"
+
+
+def _notification_content(entry: dict) -> tuple:
+    """Build (title, plain-text body) for a completed sync."""
+    failed = entry.get("status") == "error"
+    label  = entry.get("label", "SYNC")
+    path   = entry.get("path", "")
+
+    if entry.get("test"):
+        return ("Media Servarr Sync — test notification",
+                "If you can read this, notifications are configured correctly.")
+
+    title = f"{'Sync failed' if failed else 'Sync complete'} — {label}"
+
+    lines = [f"Path: {path}"]
+    episode_display, _, _ = _parse_episode_field(entry.get("episode", ""))
+    if episode_display:
+        lines.append(f"Episode: {episode_display}")
+    if entry.get("quality"):
+        lines.append(f"Quality: {entry['quality']}")
+    if entry.get("quality_profile"):
+        lines.append(f"Profile: {entry['quality_profile']}")
+    try:
+        formats = json.loads(entry.get("custom_formats") or "[]")
+    except (json.JSONDecodeError, ValueError):
+        formats = []
+    if formats:
+        lines.append("Custom formats: " + ", ".join(str(f) for f in formats))
+    lines.append(f"Took: {entry.get('duration_s', 0)}s")
+    if failed and entry.get("error"):
+        lines.append(f"Error: {entry['error']}")
+    return title, "\n".join(lines)
+
+
+def _notification_payload(provider: str, entry: dict, title: str, body: str):
+    """Return (json_body, data_body, headers) for the given provider."""
+    failed = entry.get("status") == "error"
+
+    if provider == "discord":
+        return {
+            "username": "Media Servarr Sync",
+            "embeds": [{
+                "title": title,
+                "description": body,
+                "color": 0xF87171 if failed else 0x4ADE80,
+            }],
+        }, None, None
+
+    if provider == "slack":
+        return {"text": f"*{title}*\n{body}"}, None, None
+
+    if provider == "gotify":
+        return {"title": title, "message": body,
+                "priority": 8 if failed else 4}, None, None
+
+    if provider == "ntfy":
+        return None, body.encode("utf-8"), {
+            "Title":    title,
+            "Priority": "high" if failed else "default",
+            "Tags":     "rotating_light" if failed else "white_check_mark",
+        }
+
+    # Generic: the full structured result, for anything self-hosted.
+    try:
+        formats = json.loads(entry.get("custom_formats") or "[]")
+    except (json.JSONDecodeError, ValueError):
+        formats = []
+    return {
+        "event":           "sync",
+        "title":           title,
+        "message":         body,
+        "status":          entry.get("status", ""),
+        "label":           entry.get("label", ""),
+        "path":            entry.get("path", ""),
+        "episode":         _parse_episode_field(entry.get("episode", ""))[0],
+        "quality":         entry.get("quality", ""),
+        "quality_profile": entry.get("quality_profile", ""),
+        "custom_formats":  formats,
+        "duration_s":      entry.get("duration_s", 0),
+        "error":           entry.get("error", ""),
+        "ts":              entry.get("ts", now_local().isoformat()),
+    }, None, None
+
+
+def send_notification(entry: dict, url: str = "") -> tuple:
+    """POST one notification. Returns (ok, detail) — never raises."""
+    url = (url or NOTIFY_URL).strip()
+    if not url:
+        return False, "No notification URL configured"
+
+    provider = _notify_provider(url)
+    title, body = _notification_content(entry)
+    json_body, data_body, headers = _notification_payload(provider, entry, title, body)
+
+    try:
+        res = requests.post(url, json=json_body, data=data_body, headers=headers,
+                            timeout=_NOTIFY_TIMEOUT)
+    except requests.RequestException as exc:
+        log.warning("[NOTIFY] %s request failed: %s", provider, exc)
+        return False, f"Could not reach the {provider} endpoint"
+
+    if not res.ok:
+        log.warning("[NOTIFY] %s returned HTTP %d: %s", provider, res.status_code, res.text[:200])
+        return False, f"{provider} returned HTTP {res.status_code}"
+
+    log.info("[NOTIFY] Sent %s notification (%s)", provider, entry.get("status", "test"))
+    return True, provider
+
+
+def notify_sync_result(entry: dict) -> None:
+    """Queue a notification for a finished sync, honouring NOTIFY_ON.
+
+    Dispatched on its own daemon thread: a slow or unreachable webhook must
+    never hold up the single sync worker.
+    """
+    if not NOTIFY_URL or NOTIFY_ON == "off":
+        return
+    if NOTIFY_ON == "error" and entry.get("status") != "error":
+        return
+    threading.Thread(target=send_notification, args=(dict(entry),),
+                     daemon=True, name="notify").start()
+
+
+# ---------------------------------------------------------------------------
 # Background worker
 # ---------------------------------------------------------------------------
 
@@ -982,7 +1150,7 @@ def sync_worker():
                     _cooldown[task.mapped_folder] = time.monotonic() + SYNC_COOLDOWN
 
             duration = round(time.monotonic() - start, 1)
-            history.add({
+            entry = {
                 "ts": now_local().isoformat(),
                 "label": task.label,
                 "path": task.mapped_folder,
@@ -993,7 +1161,9 @@ def sync_worker():
                 "quality": task.quality,
                 "custom_formats": task.custom_formats,
                 "quality_profile": task.quality_profile,
-            })
+            }
+            history.add(entry)
+            notify_sync_result(entry)
             sync_queue.task_done()
 
     log.info("Sync worker stopped")
@@ -2503,7 +2673,20 @@ SETTINGS_SPEC = [
 
     ("ONBOARD_WIKI_URL", "ONBOARD_WIKI_URL", "Wiki / Setup Guide URL", "url", "Onboarding Links", ""),
     ("ONBOARD_REQUEST_URL", "ONBOARD_REQUEST_URL", "Content Request URL", "url", "Onboarding Links", ""),
+
+    ("NOTIFY_URL", "NOTIFY_URL", "Notification URL", "url", "Notifications",
+     "https://discord.com/api/webhooks/..."),
+    ("NOTIFY_ON", "NOTIFY_ON", "Notify On", "choice", "Notifications", ""),
 ]
+
+# Allowed values for "choice" fields, keyed by env name.
+SETTINGS_CHOICES = {
+    "NOTIFY_ON": [
+        ("error", "Failures only"),
+        ("all",   "Every sync"),
+        ("off",   "Disabled"),
+    ],
+}
 
 
 def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
@@ -2526,6 +2709,12 @@ def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
             return "", f"{label} is not valid JSON"
         if not isinstance(parsed, dict):
             return "", f"{label} must be a JSON object"
+        return raw, None
+
+    if kind == "choice":
+        allowed = [v for v, _lbl in SETTINGS_CHOICES.get(env_name, [])]
+        if raw and allowed and raw not in allowed:
+            return "", f"{label} must be one of: {', '.join(allowed)}"
         return raw, None
 
     if kind == "int" and raw:
@@ -2556,6 +2745,7 @@ def _settings_view_model() -> list:
             "kind": kind,
             "placeholder": placeholder,
             "value": value,
+            "options": SETTINGS_CHOICES.get(env_name, []),
             "from_env": _cfg_is_env(env_name),
         })
     return [{"name": name, "fields": fields} for name, fields in groups.items()]
@@ -2597,6 +2787,31 @@ def settings_page():
 
     return render_template('settings.html', groups=_settings_view_model(),
                             message=message, msg_class=msg_class)
+
+
+@app.route('/api/notify/test', methods=['POST'])
+@csrf.exempt
+@requires_auth
+def api_notify_test():
+    """Send a test notification, so the Settings page can verify a webhook
+    URL before it's saved. Falls back to the stored NOTIFY_URL when the
+    request doesn't carry one."""
+    body = request.get_json(silent=True) or {}
+    url = (body.get('url') or NOTIFY_URL or '').strip()
+    if not url:
+        return jsonify({'error': 'Enter a notification URL first'}), 400
+    if not url.lower().startswith(('http://', 'https://')):
+        return jsonify({'error': 'Notification URL must start with http:// or https://'}), 400
+
+    ok, detail = send_notification({
+        'test': True,
+        'status': 'ok',
+        'label': 'TEST',
+        'ts': now_local().isoformat(),
+    }, url=url)
+    if not ok:
+        return jsonify({'error': detail}), 502
+    return jsonify({'status': 'sent', 'provider': detail})
 
 
 @app.route('/api/plex/discover', methods=['POST'])

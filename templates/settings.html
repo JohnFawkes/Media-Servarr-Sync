@@ -159,6 +159,16 @@
     align-self: flex-start; margin-bottom: 4px;
   }
 
+  .btn-notify-test { align-self: flex-start; margin-top: 6px; }
+
+  select {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--accent); font-family: 'IBM Plex Mono', monospace; font-size: 14px;
+    padding: 8px 12px; outline: none; width: 100%;
+  }
+  select:focus { border-color: var(--accent); }
+  select:disabled { opacity: 0.55; cursor: not-allowed; }
+
   #discover-select {
     background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius);
     color: var(--accent); font-family: 'IBM Plex Mono', monospace; font-size: 14px;
@@ -237,7 +247,17 @@
           <button type="button" class="btn-outline btn-plex-token" id="grab-token-btn">Get Token via Plex Sign-In</button>
           <span id="grab-token-status" class="discover-status"></span>
           {% endif %}
-          {% if f.kind == 'bool' %}
+          {% if f.env_name == 'NOTIFY_URL' %}
+          <span class="hint-text">Discord, Slack, Gotify and ntfy webhooks are detected automatically; anything else receives a plain JSON POST.</span>
+          {% endif %}
+          {% if f.kind == 'choice' %}
+          <select id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
+                  {% if f.from_env %}disabled{% endif %}>
+            {% for val, opt_label in f.options %}
+            <option value="{{ val }}" {% if f.value == val %}selected{% endif %}>{{ opt_label }}</option>
+            {% endfor %}
+          </select>
+          {% elif f.kind == 'bool' %}
           <div class="checkbox-row">
             <input type="checkbox" id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
                    {% if f.value in (true, 'true', 'True') %}checked{% endif %}
@@ -253,6 +273,10 @@
                  id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
                  value="{{ f.value }}" placeholder="{{ f.placeholder }}"
                  {% if f.from_env %}disabled{% endif %}>
+          {% endif %}
+          {% if f.env_name == 'NOTIFY_URL' %}
+          <button type="button" class="btn-outline btn-notify-test" id="notify-test-btn">Send Test Notification</button>
+          <span id="notify-test-status" class="discover-status"></span>
           {% endif %}
         </div>
         {% endfor %}
@@ -419,6 +443,37 @@ window.__pjaxCleanup = function() { window.onscroll = null; };
       .catch(function() {
         btn.disabled = false;
         status.textContent = 'Could not start Plex sign-in';
+      });
+  });
+})();
+
+(function() {
+  var btn = document.getElementById('notify-test-btn');
+  var status = document.getElementById('notify-test-status');
+  var urlField = document.getElementById('fld-NOTIFY_URL');
+  if (!btn) return;
+
+  btn.addEventListener('click', function() {
+    btn.disabled = true;
+    status.textContent = 'Sending…';
+    var body = {};
+    // Test whatever is currently typed in, so a URL can be checked before saving.
+    if (urlField && !urlField.disabled && urlField.value.trim()) body.url = urlField.value.trim();
+    fetch('/api/notify/test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    })
+      .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+      .then(function(res) {
+        btn.disabled = false;
+        status.textContent = res.ok
+          ? 'Sent via ' + (res.data.provider || 'webhook')
+          : (res.data.error || 'Test failed');
+      })
+      .catch(function() {
+        btn.disabled = false;
+        status.textContent = 'Test failed';
       });
   });
 })();

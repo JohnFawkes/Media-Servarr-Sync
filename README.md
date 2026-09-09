@@ -30,6 +30,7 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Configurable delay** — wait N seconds after the webhook before scanning (gives Sonarr/Radarr time to finish writing)
 - **Minimum file age** — optionally hold off scanning until a file is at least N seconds old
 - **Retry on timeout** — Plex scan attempts retry up to 3 times with automatic reconnection on stale sessions
+- **Notifications** — POST a summary of every sync (or just the failures) to Discord, Slack, Gotify, ntfy, or any webhook that accepts JSON; the service is detected from the URL and a **Send Test Notification** button on the Settings page verifies it before you save
 - **Health endpoint** — `/health` exposes queue depth, Plex connectivity, rclone mode, and recent sync history
 - **Stats API** — `/api/stats` returns aggregate sync counts, queue state, and last sync info — ready for [Homepage](https://gethomepage.dev) `customapi` widget
 - **Manual trigger UI** — password-protected web UI at `/` for ad-hoc scans
@@ -115,6 +116,8 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `MANUAL_USER` | | `admin` | Username for the manual trigger UI |
 | `MANUAL_PASS` | | `changeme` | Password for the manual trigger UI |
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `NOTIFY_URL` | | — | Webhook URL to POST a summary to when a sync finishes. See [Notifications](#notifications) |
+| `NOTIFY_ON` | | `error` | Which results to send: `error` (failures only), `all` (every sync), or `off` |
 | `MEDIA_ROOT` | | `/mnt/media` | Host path to your media root, mounted into the container (only needed if `MINIMUM_AGE > 0`) |
 | `CONTAINER_MEDIA` | | `/mnt/media` | Path **inside this container** where `MEDIA_ROOT` is mounted — must match the path Plex uses to see your files |
 
@@ -130,6 +133,56 @@ Set `USE_RCLONE=true` **only** if you serve your media through an rclone VFS mou
 | `RCLONE_RC_PASS` | | — | rclone RC password (if auth is enabled) |
 | `RCLONE_MOUNT_ROOT` | | — | Absolute path of the rclone mount root, e.g. `/mnt/media` |
 | `RCLONE_PATH_REPLACEMENTS` | | `{}` | JSON map: Sonarr/Radarr path prefix → rclone host path |
+
+### Notifications
+
+A failed scan is otherwise invisible until you happen to open the dashboard. Set
+`NOTIFY_URL` to a webhook and every sync result matching `NOTIFY_ON` is posted to it.
+
+The service is inferred from the URL, so there's nothing else to configure:
+
+| Service | Matched on | Sent as |
+|---|---|---|
+| Discord | `discord.com` / `discordapp.com` host | Webhook embed, green on success, red on failure |
+| Slack | `hooks.slack.com` host | `text` message |
+| Gotify | URL path ending in `/message` | `{title, message, priority}` (priority 8 on failure, 4 otherwise) |
+| ntfy | `ntfy` in the host | Plain-text body with `Title`, `Priority` and `Tags` headers |
+| Anything else | fallback | JSON POST (see below) |
+
+`NOTIFY_ON` accepts:
+
+| Value | Sends |
+|---|---|
+| `error` (default) | Only syncs that failed |
+| `all` | Every completed sync |
+| `off` | Nothing |
+
+Notifications are dispatched on a background thread, so a slow or unreachable
+webhook never delays a scan — a delivery failure is logged and dropped.
+
+The Settings page has a **Send Test Notification** button that posts a test
+message to whatever URL is currently in the field, so you can check a webhook
+before saving it.
+
+The generic (non-Discord/Slack/Gotify/ntfy) payload:
+
+```json
+{
+  "event": "sync",
+  "title": "Sync failed — SONARR",
+  "message": "Path: /mnt/media/tv/Show/\nEpisode: Show.S01E01.mkv\n...",
+  "status": "error",
+  "label": "SONARR",
+  "path": "/mnt/media/tv/Show/",
+  "episode": "Show.S01E01.mkv",
+  "quality": "WEB-DL-1080p",
+  "quality_profile": "WEB-1080p",
+  "custom_formats": ["ATMOS", "HDR"],
+  "duration_s": 60.0,
+  "error": "ReadTimeout: Plex did not respond within 60s",
+  "ts": "2026-01-01T00:00:00-05:00"
+}
+```
 
 ### Duration format
 
@@ -199,6 +252,7 @@ SECTION_MAPPING={ "/mnt/media/tv": "1", "/mnt/media/movies": "2" }
 | `/health` | GET | None | JSON health check + recent history |
 | `/api/stats` | GET | None | Aggregate sync stats for dashboards |
 | `/api/server-stats` | GET | Session | Plex server CPU, RAM, and bandwidth stats |
+| `/api/notify/test` | POST | Session | Send a test notification to a webhook URL |
 
 ### Health response example
 
