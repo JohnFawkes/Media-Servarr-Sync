@@ -196,6 +196,7 @@
   {% endif %}
   <form method="post"> {# nosemgrep: django-no-csrf-token #}
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next_url or '' }}">
     <label for="username">Username</label>
     <input type="text" id="username" name="username" autocomplete="username" autofocus>
     <label for="password">Password</label>

@@ -48,8 +48,9 @@ templates/
   login.html            Login page
   onboarding.html        First-run setup wizard (admin password + connect Plex), shown instead of login.html until PLEX_TOKEN is configured
   settings.html          Settings page — view/edit config, Plex server discovery, grab-token button
-  manual_ui.html        Outer shell (header, PJAX script, nav); also serves the Sync tab page-content
-  now_playing.html      Now Playing page (active Plex streams, geolocation maps, library scan)
+  manual_ui.html        Outer shell (header, PJAX script, nav); also serves the Sync tab page-content,
+                        which includes Now Playing (active Plex streams + geolocation maps),
+                        Server Stats, and the full-library-scan picker
   invites.html          Invite management page (create / revoke invite links and grants)
   invite_onboard.html   Public invite acceptance flow (/invite/<token> and /invite/<token>/accept) — unrelated to onboarding.html, which is the admin first-run setup
 ```
@@ -60,6 +61,8 @@ templates/
 - **`SyncHistory`** — SQLite3 history at `/data/history.db`; handles dedup and cooldown
 - **`SettingsStore`** — SQLite3 key/value store at `/data/settings.db`. `load_config()` resolves each config value as env var → DB setting → default, and is re-run after a Settings page save to hot-reload without a restart. Fields pinned by an env var are locked (read-only) in the Settings UI.
 - **Background worker** (`sync_worker`) — drains the queue with configurable `WEBHOOK_DELAY`
+- **Settings validation** — `_validate_setting()` checks every submitted field (`json`, `int`, `duration`, `choice`) *before* anything is written, so a save is all-or-nothing. `SETTINGS_CHOICES` supplies the options for `choice` fields
+- **Path prefix matching** — `path_has_prefix()` is the only correct way to test a path against a `SECTION_MAPPING` / `PATH_REPLACEMENTS` key; a bare `str.startswith` matches mid-segment (`/mnt/media/tv` vs `/mnt/media/tv4k`). Use `safe_int()` for anything user-supplied that must be an integer — `load_config()` runs at import, so a raising conversion there prevents startup entirely
 - **Deduplication** — duplicate webhooks for the same folder are merged while a task is in-flight
 - **Quality/custom format caching** — fetched from Sonarr/Radarr API, refreshed every 6 hours
 - **PJAX navigation** — nav-link clicks swap only `#page-content` and `#page-style` in-place; `manual_ui.html` is the persistent outer shell and all other page templates supply only their inner content block. Cleanup callbacks registered as `window.__pjaxCleanup` are called before each swap.
@@ -72,7 +75,6 @@ templates/
 | `/webhook/sonarr` | POST | none (CSRF exempt) | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | none (CSRF exempt) | Radarr webhook receiver |
 | `/` | GET/POST | session | Sync tab — manual scan UI + history |
-| `/now-playing` | GET | session | Now Playing tab — active Plex streams |
 | `/invites` | GET | session | Invite management tab |
 | `/invites/create` | POST | session | Create a new invite link |
 | `/invites/revoke/<token>` | POST | session | Revoke an invite link |
@@ -93,6 +95,9 @@ templates/
 | `/api/scan/library` | POST | session (CSRF exempt) | Trigger a full Plex library section scan |
 | `/api/libraries` | GET | session | List Plex library sections |
 | `/api/geoip` | GET | session | Server-side IP geolocation proxy (cached) |
+| `/api/maptile/<z>/<x>/<y>.png` | GET | session | Proxy + 24 h disk cache for OpenStreetMap tiles |
+| `/api/server-stats` | GET | session | Plex server CPU / RAM / bandwidth stats |
+| `/api/plex-update` | GET | session | Whether a Plex Media Server update is available (cached 1 h) |
 | `/api/thumb` | GET | session | Proxy Plex artwork thumbnails |
 
 ## Skipped Webhook Events

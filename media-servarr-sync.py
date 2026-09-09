@@ -121,15 +121,51 @@ def normalize_path(path: str, is_dir: bool = True) -> str:
     return clean + '/' if is_dir else clean
 
 
+def path_has_prefix(path: str, prefix: str) -> bool:
+    """True when `prefix` matches `path` on a path-segment boundary.
+
+    A plain str.startswith() would treat '/mnt/media/tv' as a prefix of
+    '/mnt/media/tv4k/Show', mapping the path (or picking the Plex section)
+    of a completely unrelated library. Only an exact match or a match
+    followed by '/' counts.
+    """
+    if not path or not prefix:
+        return False
+    p = prefix.rstrip('/')
+    if not p:                       # prefix was '/' — matches any absolute path
+        return path.startswith('/')
+    return path == p or path.startswith(p + '/')
+
+
 def apply_path_mapping(path: str, mapping: dict, label: str, is_dir: bool = True) -> str:
     orig = normalize_path(path, is_dir=False)
     lower = orig.lower()
     for prefix in sorted(mapping.keys(), key=len, reverse=True):
-        if lower.startswith(prefix):
-            result = normalize_path(str(mapping[prefix]) + orig[len(prefix):], is_dir=is_dir)
+        if path_has_prefix(lower, prefix):
+            result = normalize_path(str(mapping[prefix]) + orig[len(prefix.rstrip('/')):], is_dir=is_dir)
             log.debug("[%s] Map: '%s' -> '%s'", label, orig, result)
             return result
     return normalize_path(orig, is_dir=is_dir)
+
+
+def safe_int(value, default: int, minimum: Optional[int] = None,
+             maximum: Optional[int] = None) -> int:
+    """Best-effort int conversion that never raises.
+
+    Used for anything user-supplied (query strings, form fields, values typed
+    into the Settings page) so a stray non-numeric value returns the default
+    instead of surfacing as an HTTP 500 — or, for config read at import time,
+    preventing the process from starting at all.
+    """
+    try:
+        out = int(str(value).strip())
+    except (TypeError, ValueError, AttributeError):
+        return default
+    if minimum is not None and out < minimum:
+        return minimum
+    if maximum is not None and out > maximum:
+        return maximum
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +260,7 @@ def load_config():
     PLEX_TIMEOUT    = parse_duration(_cfg_raw("PLEX_TIMEOUT", "60")) or 60
     WEBHOOK_DELAY   = parse_duration(_cfg_raw("WEBHOOK_DELAY", "30"))
     MINIMUM_AGE     = parse_duration(_cfg_raw("MINIMUM_AGE", "0"))
-    HISTORY_DAYS    = int(_cfg_raw("HISTORY_DAYS", "7"))
+    HISTORY_DAYS    = safe_int(_cfg_raw("HISTORY_DAYS", "7"), 7, minimum=1)
     SYNC_COOLDOWN   = parse_duration(_cfg_raw("SYNC_COOLDOWN", "5m"))
     MANUAL_USER     = _cfg_raw("MANUAL_USER", "admin")
     MANUAL_PASS     = _cfg_raw("MANUAL_PASS", "password")
@@ -264,6 +300,13 @@ def load_config():
     # Apply secret key now that config is loaded
     app.secret_key = SECRET_KEY
 
+    # `history` is constructed after the first load_config() call, so it only
+    # exists on subsequent (Settings-page) reloads — keep its retention window
+    # in step with HISTORY_DAYS so the change takes effect without a restart.
+    _history = globals().get('history')
+    if _history is not None:
+        _history.set_retention(HISTORY_DAYS)
+
 
 load_config()
 
@@ -286,6 +329,18 @@ _cf_lock  = threading.Lock()
 # ---------------------------------------------------------------------------
 _geo_cache: dict[str, dict] = {}   # ip → {status, city, country, lat, lon, ...}
 _geo_cache_lock = threading.Lock()
+_GEO_CACHE_MAX = 512               # bound the cache; entries expire after 24 h anyway
+
+
+def _geo_cache_put(ip: str, data: dict) -> None:
+    """Store a geo lookup, evicting the oldest entries past _GEO_CACHE_MAX.
+
+    Must be called with _geo_cache_lock held.
+    """
+    _geo_cache[ip] = data
+    if len(_geo_cache) > _GEO_CACHE_MAX:
+        for stale in sorted(_geo_cache, key=lambda k: _geo_cache[k].get('_ts', 0))[:len(_geo_cache) - _GEO_CACHE_MAX]:
+            _geo_cache.pop(stale, None)
 
 
 
@@ -466,6 +521,11 @@ class SyncHistory:
             if 'quality_profile' not in existing:
                 conn.execute("ALTER TABLE sync_history ADD COLUMN quality_profile TEXT DEFAULT ''")
             conn.commit()
+
+    def set_retention(self, retention_days: int):
+        """Update the retention window (called after a Settings-page save)."""
+        with self._lock:
+            self._retention_days = retention_days
 
     def add(self, entry: dict):
         """Add a sync entry and prune old records."""
@@ -781,9 +841,24 @@ def requires_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get('authenticated'):
-            return redirect(url_for('login', next=request.path))
+            return redirect(url_for('login', next=request.full_path if request.query_string else request.path))
         return f(*args, **kwargs)
     return decorated
+
+
+def safe_next_url(candidate: str, fallback_endpoint: str = 'manual_webhook') -> str:
+    """Return `candidate` if it is a safe same-site relative path, else the
+    fallback route. Guards the post-login redirect against open redirects
+    ('//evil.example', 'https://evil.example', backslash-scheme tricks)."""
+    default = url_for(fallback_endpoint)
+    if not candidate:
+        return default
+    candidate = candidate.strip()
+    if not candidate.startswith('/') or candidate.startswith('//') or candidate.startswith('/\\'):
+        return default
+    if urllib.parse.urlsplit(candidate).scheme or urllib.parse.urlsplit(candidate).netloc:
+        return default
+    return candidate
 
 
 # ---------------------------------------------------------------------------
@@ -1065,15 +1140,25 @@ def _merge_episode_counts(existing: str, incoming: str) -> str:
         # Promote any plain strings from the other side to minimal rich objects
         for name in ex_plain:
             if not any(e['f'] == name for e in merged):
+                k = _ep_key(name)
+                if k and k not in seen:
+                    seen[k] = len(merged)
                 merged.append({"f": name, "q": "", "cf": []})
         for obj in in_rich:
             k = _ep_key(obj['f'])
             if k and k in seen:
-                pass  # already have this episode — keep first-seen metadata
-            elif not any(e['f'] == obj['f'] for e in merged):
+                continue  # already have this episode — keep first-seen metadata
+            if not any(e['f'] == obj['f'] for e in merged):
+                if k:
+                    seen[k] = len(merged)
                 merged.append(obj)
         for name in in_plain:
+            k = _ep_key(name)
+            if k and k in seen:
+                continue
             if not any(e['f'] == name for e in merged):
+                if k:
+                    seen[k] = len(merged)
                 merged.append({"f": name, "q": "", "cf": []})
         return json.dumps(merged)
 
@@ -1201,7 +1286,8 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
     # Section mapping
     comp = mapped_folder.rstrip('/').lower()
     section_id = next(
-        (SECTION_MAPPING[p] for p in sorted(SECTION_MAPPING, key=len, reverse=True) if comp.startswith(p)),
+        (SECTION_MAPPING[p] for p in sorted(SECTION_MAPPING, key=len, reverse=True)
+         if path_has_prefix(comp, p)),
         None
     )
 
@@ -1269,6 +1355,20 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
                     log.info("[%s] [COOLDOWN] Recently synced, deferring follow-up scan %.0fs: %s",
                              label, delay, mapped_folder)
                 return {"status": "deferred"}, 200
+
+        # A deferred task may still be waiting on its timer if the cooldown
+        # expired before that timer fired. Fold its accumulated metadata into
+        # this task rather than letting the timer drop it on the floor.
+        stale_pending = _cooldown_pending.pop(mapped_folder, None)
+        if stale_pending:
+            task.episode = _merge_episode_counts(stale_pending.episode, task.episode)
+            task.quality = _merge_qualities(stale_pending.quality, task.quality)
+            if not task.quality_profile:
+                task.quality_profile = stale_pending.quality_profile
+            task.custom_formats = _merge_custom_formats(
+                stale_pending.custom_formats, task.custom_formats)
+            log.info("[%s] [COOLDOWN] Absorbed deferred scan into new task: %s",
+                     label, mapped_folder)
 
         _in_flight[mapped_folder] = task
 
@@ -1690,12 +1790,17 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        if username == MANUAL_USER and password == MANUAL_PASS:
+        # Constant-time comparison so response timing can't be used to probe
+        # the configured username/password character by character.
+        user_ok = _secrets.compare_digest(username, MANUAL_USER)
+        pass_ok = _secrets.compare_digest(password, MANUAL_PASS)
+        if user_ok and pass_ok:
             session.permanent = bool(request.form.get('remember_me'))
             session['authenticated'] = True
-            return redirect(url_for('manual_webhook'))
+            return redirect(safe_next_url(request.form.get('next', '')))
         error = "Invalid username or password."
-    return render_template('login.html', error=error)
+    return render_template('login.html', error=error,
+                           next_url=request.args.get('next', ''))
 
 
 @app.route('/auth/plex/start', methods=['POST'])
@@ -1717,15 +1822,30 @@ def auth_plex_start():
         log.error("[AUTH] Failed to create Plex PIN: %s", exc)
         return jsonify({"error": "Could not reach plex.tv"}), 502
 
+    pin_id, pin_code = data.get("id"), data.get("code")
+    if not pin_id or not pin_code:
+        log.error("[AUTH] Unexpected plex.tv PIN response: %r", data)
+        return jsonify({"error": "Unexpected response from plex.tv"}), 502
+
     auth_url = (
         "https://app.plex.tv/auth#?"
         + urllib.parse.urlencode({
             "clientID": PLEX_IDENTIFIER,
-            "code": data["code"],
+            "code": pin_code,
             "context[device][product]": PLEX_IDENTIFIER,
         })
     )
-    return jsonify({"id": data["id"], "auth_url": auth_url})
+    # Bind the PIN to this browser session. The poll endpoints will only look
+    # up a PIN this same session created, so a caller can't walk plex.tv PIN
+    # ids hunting for one someone else has already claimed.
+    session['plex_pin_id'] = str(pin_id)
+    return jsonify({"id": pin_id, "auth_url": auth_url})
+
+
+def _session_pin_id(pin_id: str) -> bool:
+    """True when `pin_id` is the PIN this browser session created."""
+    expected = str(session.get('plex_pin_id', ''))
+    return bool(expected) and _secrets.compare_digest(str(pin_id), expected)
 
 
 def _poll_plex_pin(pin_id: str):
@@ -1752,11 +1872,14 @@ def auth_plex_poll():
     pin_id = request.args.get('id', '').strip()
     if not pin_id:
         return jsonify({"error": "id required"}), 400
+    if not _session_pin_id(pin_id):
+        return jsonify({"error": "unknown sign-in request"}), 403
     new_token, error = _poll_plex_pin(pin_id)
     if error:
         return error
     if not new_token:
         return jsonify({"authenticated": False})
+    session.pop('plex_pin_id', None)   # single use
 
     # If a Plex account is already configured, only allow that same account
     # to sign in — otherwise any Plex user could log into the admin panel.
@@ -1793,11 +1916,14 @@ def api_plex_token_poll():
     pin_id = request.args.get('id', '').strip()
     if not pin_id:
         return jsonify({"error": "id required"}), 400
+    if not _session_pin_id(pin_id):
+        return jsonify({"error": "unknown sign-in request"}), 403
     token, error = _poll_plex_pin(pin_id)
     if error:
         return error
     if not token:
         return jsonify({"token": None})
+    session.pop('plex_pin_id', None)   # single use
     return jsonify({"token": token})
 
 
@@ -1843,7 +1969,7 @@ def manual_webhook():
         status_filter = ''
 
     # Pagination
-    page = max(1, int(request.args.get('page', 1)))
+    page = safe_int(request.args.get('page', 1), 1, minimum=1)
     per_page = 25
     offset = (page - 1) * per_page
 
@@ -2380,6 +2506,43 @@ SETTINGS_SPEC = [
 ]
 
 
+def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
+    """Validate one submitted Settings field.
+
+    Returns (normalized_value, error_message). Exactly one is meaningful:
+    error_message is None when the value is good. An empty value is always
+    accepted — it means "unset, fall back to the default".
+    """
+    if kind == "bool":
+        return ("true" if raw else "false"), None
+
+    raw = (raw or "").strip()
+
+    if kind == "json":
+        raw = raw or "{}"
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return "", f"{label} is not valid JSON"
+        if not isinstance(parsed, dict):
+            return "", f"{label} must be a JSON object"
+        return raw, None
+
+    if kind == "int" and raw:
+        try:
+            int(raw)
+        except ValueError:
+            return "", f"{label} must be a whole number"
+        return raw, None
+
+    if kind == "duration" and raw:
+        if parse_duration(raw) <= 0 and raw not in ("0", "0s"):
+            return "", f"{label} must be a duration like 30s, 5m, 1h or a plain number of seconds"
+        return raw, None
+
+    return raw, None
+
+
 def _settings_view_model() -> list:
     """Build the grouped settings list for the Settings page template."""
     groups = {}
@@ -2405,22 +2568,28 @@ def settings_page():
     msg_class = "info"
 
     if request.method == 'POST':
-        for env_name, _global_name, _label, kind, _group, _placeholder in SETTINGS_SPEC:
+        # Validate the whole form before writing anything. Committing field by
+        # field meant a bad value halfway down persisted every field above it
+        # while skipping the load_config() reload, leaving the stored settings
+        # and the running config out of sync.
+        pending: dict = {}
+        errors: list = []
+        for env_name, _global_name, label, kind, _group, _placeholder in SETTINGS_SPEC:
             if _cfg_is_env(env_name):
                 continue  # locked — env var always wins, ignore any submitted value
-            raw = request.form.get(env_name, "")
-            if kind == "bool":
-                raw = "true" if request.form.get(env_name) else "false"
-            elif kind == "json":
-                raw = raw.strip() or "{}"
-                try:
-                    json.loads(raw)
-                except (json.JSONDecodeError, ValueError):
-                    message = f"✗ Invalid JSON for {_label}"
-                    msg_class = "error"
-                    break
-            settings_store.set(env_name, raw)
+            value, err = _validate_setting(env_name, kind, label,
+                                           request.form.get(env_name, ""))
+            if err:
+                errors.append(err)
+            else:
+                pending[env_name] = value
+
+        if errors:
+            message = "✗ " + "; ".join(errors)
+            msg_class = "error"
         else:
+            for env_name, value in pending.items():
+                settings_store.set(env_name, value)
             load_config()
             invalidate_plex()
             message = "✓ Settings saved"
@@ -2559,14 +2728,14 @@ def api_geoip():
             '_ts':        now,
         }
         with _geo_cache_lock:
-            _geo_cache[safe_ip] = data
+            _geo_cache_put(safe_ip, data)
         out = dict(data)
         out.pop('_ts', None)
         return jsonify(_sanitize_floats(out))
     except Exception as exc:
         log.warning("GeoIP lookup failed for ip=%r: %s", request.args.get('ip'), exc)
         with _geo_cache_lock:
-            _geo_cache[safe_ip] = {'_error': True, '_ts': now}
+            _geo_cache_put(safe_ip, {'_error': True, '_ts': now})
         return jsonify({'error': 'Geolocation lookup failed.'}), 500
 
 
@@ -2652,9 +2821,9 @@ def create_invite():
     allow_sync        = 'allow_sync' in request.form
     allow_channels    = 'allow_channels' in request.form
     home_user         = 'home_user' in request.form
-    duration_days     = int(request.form.get('duration_days', '0') or '0')
-    max_uses          = int(request.form.get('max_uses', '1') or '1')
-    link_expires_days = int(request.form.get('link_expires_days', '7') or '7')
+    duration_days     = safe_int(request.form.get('duration_days'), 0, minimum=0)
+    max_uses          = safe_int(request.form.get('max_uses'), 1, minimum=0)
+    link_expires_days = safe_int(request.form.get('link_expires_days'), 7, minimum=0)
     invite_db.create(label, section_ids, allow_sync, allow_channels, home_user,
                      duration_days, max_uses, link_expires_days)
     return redirect(url_for('invites_page'))
