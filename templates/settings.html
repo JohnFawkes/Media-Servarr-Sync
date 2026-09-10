@@ -133,6 +133,7 @@
   .msg-success { color: var(--success); border-color: var(--success); background: rgba(74,222,128,0.07); }
   .msg-error   { color: var(--error);   border-color: var(--error);   background: rgba(248,113,113,0.07); }
   .msg-info    { color: var(--info);    border-color: var(--info);    background: rgba(96,165,250,0.07); }
+  .msg-warn    { color: var(--warn);    border-color: var(--warn);    background: rgba(251,146,60,0.07); }
 
   .refresh-btn {
     display: inline-flex; align-items: center; justify-content: center;
@@ -154,10 +155,25 @@
     display: block; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
     color: var(--accent); margin-bottom: 4px;
   }
+  .hint-text code {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 3px; padding: 0 3px;
+  }
+  .hint-text a { color: var(--info); }
 
   .btn-plex-token {
     align-self: flex-start; margin-bottom: 4px;
   }
+
+
+  select {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--accent); font-family: 'IBM Plex Mono', monospace; font-size: 14px;
+    padding: 8px 12px; outline: none; width: 100%;
+  }
+  select:focus { border-color: var(--accent); }
+  select:disabled { opacity: 0.55; cursor: not-allowed; }
 
   #discover-select {
     background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius);
@@ -169,7 +185,7 @@
     color: var(--accent); margin-top: 4px;
   }
 
-  .save-bar { display: flex; justify-content: flex-end; margin-top: 4px; }
+  .save-bar { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
 
   #back-to-top {
     position: fixed; bottom: 24px; right: 24px;
@@ -218,7 +234,7 @@
       <div class="card-label">{{ group.name }}</div>
       <div class="form-grid">
         {% for f in group.fields %}
-        <div class="field {% if f.kind == 'json' %}field-full{% endif %}">
+        <div class="field {% if f.kind in ('json', 'urls') %}field-full{% endif %}">
           <label for="fld-{{ f.env_name }}">
             {{ f.label }}
             {% if f.from_env %}<span class="badge badge-env">Set via environment</span>{% endif %}
@@ -237,16 +253,27 @@
           <button type="button" class="btn-outline btn-plex-token" id="grab-token-btn">Get Token via Plex Sign-In</button>
           <span id="grab-token-status" class="discover-status"></span>
           {% endif %}
-          {% if f.kind == 'bool' %}
+          {% if f.env_name == 'NOTIFY_URLS' %}
+          <span class="hint-text">One target per line (or comma-separated). Any <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">Apprise</a> URL works — <code>discord://</code>, <code>tgram://</code>, <code>mailto://</code>, <code>ntfy://</code>, <code>gotify://</code> and 100+ more — as do raw Discord/Slack/ntfy webhook URLs. Any other <code>http(s)://</code> URL receives a plain JSON POST. Use <em>Save &amp; Send Test</em> below to check them.</span>
+          {% endif %}
+          {% if f.kind == 'choice' %}
+          <select id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
+                  {% if f.from_env %}disabled{% endif %}>
+            {% for val, opt_label in f.options %}
+            <option value="{{ val }}" {% if f.value == val %}selected{% endif %}>{{ opt_label }}</option>
+            {% endfor %}
+          </select>
+          {% elif f.kind == 'bool' %}
           <div class="checkbox-row">
             <input type="checkbox" id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
                    {% if f.value in (true, 'true', 'True') %}checked{% endif %}
                    {% if f.from_env %}disabled{% endif %}>
             <span>Enabled</span>
           </div>
-          {% elif f.kind == 'json' %}
+          {% elif f.kind in ('json', 'urls') %}
           <textarea id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
                     placeholder="{{ f.placeholder }}"
+                    {% if f.kind == 'urls' %}rows="3" spellcheck="false"{% endif %}
                     {% if f.from_env %}disabled{% endif %}>{{ f.value }}</textarea>
           {% else %}
           <input type="{{ 'password' if f.kind == 'password' else 'text' }}"
@@ -260,6 +287,7 @@
     </div>
     {% endfor %}
     <div class="save-bar">
+      <button type="submit" name="action" value="save_and_test" class="btn-outline">Save &amp; Send Test</button>
       <button type="submit">Save Settings</button>
     </div>
   </form>

@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Notifications** — a new `NOTIFY_URLS` setting sends a summary of each finished sync to one or more targets, so a failed scan no longer goes unnoticed until someone opens the dashboard. Delivery goes through [Apprise](https://github.com/caronc/apprise/wiki), so Discord, Telegram, Slack, ntfy, Gotify, email, Matrix, Pushover and 100+ other services work by URL (`discord://…`, `tgram://…`, `mailto://…`), as do raw Discord/Slack/ntfy webhook URLs. Failures are sent with raised priority and shown red in Discord. Any other `http(s)://` URL — plus bare Gotify `/message?token=` URLs — is handled directly, receiving the full result as a structured JSON POST: status, path, episode, quality, profile, custom formats, duration and error. Targets are comma- or newline-separated and delivered independently, so one dead webhook doesn't stop the rest; `NOTIFY_ON` selects `error` (failures only, the default), `all`, or `off`. Delivery runs on a background thread so a slow or unreachable target never delays a scan, and the Settings page has a **Save & Send Test** button that saves and then notifies every configured target. Targets are validated on save, and are redacted to scheme and host everywhere they're logged or displayed, since these URLs embed tokens. Apprise is an optional dependency — without it, plain webhooks and raw Discord/Slack/Gotify/ntfy URLs still work.
+
+### Fixed
+- **A sync recorded success when Plex was unreachable** — `sync_worker` guarded the whole scan with `if plex_instance:`, so when `get_plex()` couldn't connect the scan was skipped and the task was still written to history as `ok`. A Plex outage therefore filled the history with green rows for folders that were never scanned, and — under the default `NOTIFY_ON=error` — sent no alert at all. An unreachable Plex is now recorded as a failure, including when a reconnect during the timeout-retry loop fails.
+- **`:dev` Docker tag disappearing after release builds** — the old `cleanup-packages.yml` workflow deleted "untagged" GHCR package versions after every master build, but `actions/delete-package-versions`' untagged detection doesn't reliably account for multi-arch images (a tagged manifest index's per-platform child manifests are technically untagged versions of their own), so it could delete a manifest a live tag still pointed to — breaking `docker pull ...:dev` with "manifest unknown" right after a release. The workflow has been replaced: it now only runs when a PR closes, and only deletes the single, exact GHCR package version matching that PR's own preview image tag (built by `pr-docker.yml`), found by precise tag match — it can no longer touch `dev`, `latest`, or any versioned release tag.
+- **Path prefixes matched mid-segment, scanning the wrong Plex library** — `PATH_REPLACEMENTS`, `RCLONE_PATH_REPLACEMENTS` and `SECTION_MAPPING` all compared prefixes with a plain "starts with" test, so a mapping for `/mnt/media/tv` also matched `/mnt/media/tv4k/...` and `/mnt/media/tvarchive/...`. Anyone with sibling libraries sharing a name prefix (a very common `tv` / `tv4k` split) had those paths silently rewritten to the wrong location, or handed to the wrong Plex section ID. Prefixes now only match on a path-segment boundary.
+- **A non-numeric `HISTORY_DAYS` bricked the container** — `load_config()` runs at import, so a value like `seven` saved from the Settings page raised `ValueError` before the app could start, leaving a crash-looping container and no UI to correct it from. All numeric config now falls back to its default instead of raising.
+- **HTTP 500 on non-numeric page/form input** — `/?page=abc` and non-numeric `duration_days` / `max_uses` / `link_expires_days` on `/invites/create` crashed the request instead of falling back to a sane default.
+- **History retention change needed a restart** — `HISTORY_DAYS` was read once when the history store was constructed, so editing it on the Settings page had no effect until the process restarted. The retention window is now updated on config reload.
+- **Settings page saved partial forms** — fields were written to the database one at a time, so an invalid JSON value halfway down persisted every field above it and then skipped the `load_config()` reload, leaving the stored settings and the running config out of sync. The whole form is now validated before anything is written, and duration, whole-number and choice fields are validated too (a typo'd `WEBHOOK_DELAY` used to silently become `0`).
+- **Deferred scans dropped their accumulated metadata** — when a cooldown expired before its deferred-scan timer fired, a newly arriving webhook queued its own task and the timer then discarded the deferred one, losing the episode/quality/custom-format info merged into it. The pending task is now folded into the new one.
+- **Duplicate episodes in merged batch webhooks** — `_merge_episode_counts` built its seen-episode index once and never updated it while appending, so two files for the same episode could both be recorded.
+- **Login ignored the page you came from** — `requires_auth` passed a `next` parameter that the login handler never read, so you always landed on the Sync tab. The original destination is now restored after signing in (relative same-site paths only, so it can't be used as an open redirect).
+- **Unbounded geo-IP cache** — `/api/geoip` cached every looked-up address forever; it's now capped at 512 entries with oldest-first eviction.
+
+### Security
+- **Plex sign-in accepted any PIN id** — `/auth/plex/poll` and `/api/plex/token/poll` polled whatever plex.tv PIN id the caller passed. On an instance that hadn't been connected to Plex yet, walking PIN ids could land on a PIN another Plex user had just claimed and bootstrap that token into an admin session. PINs are now bound to the browser session that created them and are single-use.
+- **Login credentials compared with `==`** — the username and password checks are now constant-time (`secrets.compare_digest`), so response timing can't be used to probe them.
+
 ## [v0.24.0] - 2026-07-15
 
 ### Fixed
@@ -17,6 +39,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **First-run onboarding wizard** — until a Plex token is configured, hitting the web UI for the first time shows a setup wizard instead of a bare login form: an optional step to replace the default admin password (skipped if it's already been changed or is pinned by `MANUAL_PASS`), and a step to connect Plex via "Sign in with Plex" or a manual URL/token entry. A "Skip for now" link is always available.
 
 ### Changed
+- Update dependency python-dotenv to v1.2.3
+- Update dependency sigstore/cosign to v3
+- Update dependency sigstore/cosign to v2.6.5
 - **Settings page Plex server discovery** — only lists Plex Media Servers the signed-in account owns/administers, not ones it's merely been invited to as a friend/shared user. The refresh icon is bigger and Plex-amber colored, and a visible hint line now explains what it does instead of relying on a hover tooltip alone.
 
 ### Fixed

@@ -35,6 +35,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import plexapi
 from waitress import serve
+
+try:
+    import apprise
+except ImportError:                       # pragma: no cover - optional dependency
+    apprise = None
+
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response, send_file
 from flask_wtf.csrf import CSRFProtect
 from dotenv import load_dotenv
@@ -83,6 +89,12 @@ _handler.setFormatter(_TZFormatter(
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger(__name__)
 
+# Apprise is silenced because we report every outcome ourselves, and its own
+# output is misleading here: probing whether it can handle a target logs
+# "Unparseable URL" at ERROR for every plain webhook, which is an expected
+# case that falls through to the built-in HTTP sender.
+logging.getLogger('apprise').setLevel(logging.CRITICAL)
+
 app = Flask(__name__)
 csrf = CSRFProtect(app)
 
@@ -121,15 +133,51 @@ def normalize_path(path: str, is_dir: bool = True) -> str:
     return clean + '/' if is_dir else clean
 
 
+def path_has_prefix(path: str, prefix: str) -> bool:
+    """True when `prefix` matches `path` on a path-segment boundary.
+
+    A plain str.startswith() would treat '/mnt/media/tv' as a prefix of
+    '/mnt/media/tv4k/Show', mapping the path (or picking the Plex section)
+    of a completely unrelated library. Only an exact match or a match
+    followed by '/' counts.
+    """
+    if not path or not prefix:
+        return False
+    p = prefix.rstrip('/')
+    if not p:                       # prefix was '/' — matches any absolute path
+        return path.startswith('/')
+    return path == p or path.startswith(p + '/')
+
+
 def apply_path_mapping(path: str, mapping: dict, label: str, is_dir: bool = True) -> str:
     orig = normalize_path(path, is_dir=False)
     lower = orig.lower()
     for prefix in sorted(mapping.keys(), key=len, reverse=True):
-        if lower.startswith(prefix):
-            result = normalize_path(str(mapping[prefix]) + orig[len(prefix):], is_dir=is_dir)
+        if path_has_prefix(lower, prefix):
+            result = normalize_path(str(mapping[prefix]) + orig[len(prefix.rstrip('/')):], is_dir=is_dir)
             log.debug("[%s] Map: '%s' -> '%s'", label, orig, result)
             return result
     return normalize_path(orig, is_dir=is_dir)
+
+
+def safe_int(value, default: int, minimum: Optional[int] = None,
+             maximum: Optional[int] = None) -> int:
+    """Best-effort int conversion that never raises.
+
+    Used for anything user-supplied (query strings, form fields, values typed
+    into the Settings page) so a stray non-numeric value returns the default
+    instead of surfacing as an HTTP 500 — or, for config read at import time,
+    preventing the process from starting at all.
+    """
+    try:
+        out = int(str(value).strip())
+    except (TypeError, ValueError, AttributeError):
+        return default
+    if minimum is not None and out < minimum:
+        return minimum
+    if maximum is not None and out > maximum:
+        return maximum
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +255,10 @@ def parse_json_env(key: str) -> dict:
 PORT      = int(os.getenv("PORT", "5000"))
 DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "yes")
 
+# Accepted NOTIFY_ON values — defined here because load_config() runs at import,
+# before the notification helpers further down are reached.
+NOTIFY_ON_CHOICES = ("error", "all", "off")
+
 
 def load_config():
     """(Re)load all env/DB-backed configuration into module globals. Called
@@ -217,14 +269,15 @@ def load_config():
         SONARR_URL, SONARR_API_KEY, RADARR_URL, RADARR_API_KEY, \
         ONBOARD_WIKI_URL, ONBOARD_REQUEST_URL, USE_RCLONE, RCLONE_RC_URL, \
         RCLONE_RC_USER, RCLONE_RC_PASS, RCLONE_MOUNT_ROOT, PLEX_IDENTIFIER, \
-        PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING
+        PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING, \
+        NOTIFY_URLS, NOTIFY_ON
 
     PLEX_URL        = _cfg_raw("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
     PLEX_TOKEN      = _cfg_raw("PLEX_TOKEN", "")
     PLEX_TIMEOUT    = parse_duration(_cfg_raw("PLEX_TIMEOUT", "60")) or 60
     WEBHOOK_DELAY   = parse_duration(_cfg_raw("WEBHOOK_DELAY", "30"))
     MINIMUM_AGE     = parse_duration(_cfg_raw("MINIMUM_AGE", "0"))
-    HISTORY_DAYS    = int(_cfg_raw("HISTORY_DAYS", "7"))
+    HISTORY_DAYS    = safe_int(_cfg_raw("HISTORY_DAYS", "7"), 7, minimum=1)
     SYNC_COOLDOWN   = parse_duration(_cfg_raw("SYNC_COOLDOWN", "5m"))
     MANUAL_USER     = _cfg_raw("MANUAL_USER", "admin")
     MANUAL_PASS     = _cfg_raw("MANUAL_PASS", "password")
@@ -241,6 +294,16 @@ def load_config():
     # Onboarding / offboarding links shown on the invite page
     ONBOARD_WIKI_URL    = _cfg_raw("ONBOARD_WIKI_URL", "").rstrip('/')
     ONBOARD_REQUEST_URL = _cfg_raw("ONBOARD_REQUEST_URL", "").rstrip('/')
+
+    # Notifications — one or more targets notified when a sync finishes.
+    # Anything Apprise understands (discord://, tgram://, mailto://, …) plus
+    # plain http(s) webhooks. NOTIFY_ON: 'error' (default), 'all', or 'off'.
+    # NOTIFY_URL is the original single-target name, kept as an alias.
+    NOTIFY_URLS = _cfg_raw("NOTIFY_URLS", "").strip() or _cfg_raw("NOTIFY_URL", "").strip()
+    NOTIFY_ON   = _cfg_raw("NOTIFY_ON", "error").strip().lower()
+    if NOTIFY_ON not in NOTIFY_ON_CHOICES:
+        log.warning("Unknown NOTIFY_ON value %r — falling back to 'error'", NOTIFY_ON)
+        NOTIFY_ON = "error"
 
     # Rclone — set USE_RCLONE=false to skip all rclone calls entirely
     USE_RCLONE        = _cfg_raw("USE_RCLONE", "false").strip().lower() in ("1", "true", "yes")
@@ -264,6 +327,13 @@ def load_config():
     # Apply secret key now that config is loaded
     app.secret_key = SECRET_KEY
 
+    # `history` is constructed after the first load_config() call, so it only
+    # exists on subsequent (Settings-page) reloads — keep its retention window
+    # in step with HISTORY_DAYS so the change takes effect without a restart.
+    _history = globals().get('history')
+    if _history is not None:
+        _history.set_retention(HISTORY_DAYS)
+
 
 load_config()
 
@@ -286,6 +356,18 @@ _cf_lock  = threading.Lock()
 # ---------------------------------------------------------------------------
 _geo_cache: dict[str, dict] = {}   # ip → {status, city, country, lat, lon, ...}
 _geo_cache_lock = threading.Lock()
+_GEO_CACHE_MAX = 512               # bound the cache; entries expire after 24 h anyway
+
+
+def _geo_cache_put(ip: str, data: dict) -> None:
+    """Store a geo lookup, evicting the oldest entries past _GEO_CACHE_MAX.
+
+    Must be called with _geo_cache_lock held.
+    """
+    _geo_cache[ip] = data
+    if len(_geo_cache) > _GEO_CACHE_MAX:
+        for stale in sorted(_geo_cache, key=lambda k: _geo_cache[k].get('_ts', 0))[:len(_geo_cache) - _GEO_CACHE_MAX]:
+            _geo_cache.pop(stale, None)
 
 
 
@@ -466,6 +548,11 @@ class SyncHistory:
             if 'quality_profile' not in existing:
                 conn.execute("ALTER TABLE sync_history ADD COLUMN quality_profile TEXT DEFAULT ''")
             conn.commit()
+
+    def set_retention(self, retention_days: int):
+        """Update the retention window (called after a Settings-page save)."""
+        with self._lock:
+            self._retention_days = retention_days
 
     def add(self, entry: dict):
         """Add a sync entry and prune old records."""
@@ -786,6 +873,35 @@ def requires_auth(f):
     return decorated
 
 
+# Endpoints that would defeat the point of redirecting back after a login.
+_NEXT_URL_DENY = {'login', 'logout', 'onboarding'}
+
+
+def safe_next_url(candidate: str, fallback_endpoint: str = 'manual_webhook') -> str:
+    """Resolve `candidate` to a route this app actually serves.
+
+    The value returned is always built by url_for() from an endpoint name
+    matched against our own URL map — the caller's text is never echoed into
+    the redirect — so a crafted `next` cannot send the user off-site.
+    """
+    default = url_for(fallback_endpoint)
+    if not candidate:
+        return default
+    path = urllib.parse.urlsplit(candidate.strip()).path
+    if not path.startswith('/') or path.startswith('//'):
+        return default
+    try:
+        endpoint, values = app.url_map.bind(request.host).match(path, method='GET')
+    except Exception:
+        return default
+    if endpoint in _NEXT_URL_DENY:
+        return default
+    try:
+        return url_for(endpoint, **values)
+    except Exception:
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Rclone
 # ---------------------------------------------------------------------------
@@ -825,6 +941,301 @@ def rclone_vfs_refresh(host_path: str, label: str):
             log.error("[%s] [RCLONE] Error %d: %s", label, res.status_code, res.text)
     except requests.RequestException as exc:
         log.error("[%s] [RCLONE] Connection error: %s", label, exc)
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+# A sync failure is otherwise invisible until somebody opens the dashboard.
+# NOTIFY_URLS lists one or more targets; NOTIFY_ON decides which results are
+# worth sending.
+#
+# Each target is handed to Apprise first, which covers 100+ services and also
+# understands raw Discord, Slack and ntfy webhook URLs. Whatever Apprise won't
+# parse — a bare Gotify `/message?token=` URL, or any endpoint that just wants
+# JSON — falls through to the built-in HTTP sender below, which is also the
+# whole path when Apprise isn't installed.
+
+_NOTIFY_TIMEOUT = 10
+
+
+def _host_is(host: str, *domains: str) -> bool:
+    """True when `host` is exactly one of `domains`, or a subdomain of one.
+
+    A substring test would accept `discord.com.example.net` as Discord, so
+    every comparison is anchored to a full label boundary.
+    """
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def _notify_provider(url: str) -> str:
+    """Infer the notification service from its URL.
+
+    Detection is intentionally simple and documented in the README so users can
+    predict it: Discord and Slack are matched on their webhook hostnames,
+    Gotify on its '/message' endpoint, ntfy on 'ntfy' appearing in the host.
+    Anything else gets a plain JSON POST.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "generic"
+    host, path = (parts.hostname or "").lower(), (parts.path or "").lower()
+    if _host_is(host, "discord.com", "discordapp.com"):
+        return "discord"
+    if _host_is(host, "hooks.slack.com"):
+        return "slack"
+    if path.rstrip("/").endswith("/message"):
+        return "gotify"
+    if _host_is(host, "ntfy.sh") or "ntfy" in host.split("."):
+        return "ntfy"
+    return "generic"
+
+
+def _notification_content(entry: dict) -> tuple:
+    """Build (title, plain-text body) for a completed sync."""
+    failed = entry.get("status") == "error"
+    label  = entry.get("label", "SYNC")
+    path   = entry.get("path", "")
+
+    if entry.get("test"):
+        return ("Media Servarr Sync — test notification",
+                "If you can read this, notifications are configured correctly.")
+
+    title = f"{'Sync failed' if failed else 'Sync complete'} — {label}"
+
+    lines = [f"Path: {path}"]
+    episode_display, _, _ = _parse_episode_field(entry.get("episode", ""))
+    if episode_display:
+        lines.append(f"Episode: {episode_display}")
+    if entry.get("quality"):
+        lines.append(f"Quality: {entry['quality']}")
+    if entry.get("quality_profile"):
+        lines.append(f"Profile: {entry['quality_profile']}")
+    try:
+        formats = json.loads(entry.get("custom_formats") or "[]")
+    except (json.JSONDecodeError, ValueError):
+        formats = []
+    if formats:
+        lines.append("Custom formats: " + ", ".join(str(f) for f in formats))
+    lines.append(f"Took: {entry.get('duration_s', 0)}s")
+    if failed and entry.get("error"):
+        lines.append(f"Error: {entry['error']}")
+    return title, "\n".join(lines)
+
+
+def _notification_payload(provider: str, entry: dict, title: str, body: str):
+    """Return (json_body, data_body, headers) for the given provider."""
+    failed = entry.get("status") == "error"
+
+    if provider == "discord":
+        return {
+            "username": "Media Servarr Sync",
+            "embeds": [{
+                "title": title,
+                "description": body,
+                "color": 0xF87171 if failed else 0x4ADE80,
+            }],
+        }, None, None
+
+    if provider == "slack":
+        return {"text": f"*{title}*\n{body}"}, None, None
+
+    if provider == "gotify":
+        return {"title": title, "message": body,
+                "priority": 8 if failed else 4}, None, None
+
+    if provider == "ntfy":
+        return None, body.encode("utf-8"), {
+            "Title":    title,
+            "Priority": "high" if failed else "default",
+            "Tags":     "rotating_light" if failed else "white_check_mark",
+        }
+
+    # Generic: the full structured result, for anything self-hosted.
+    try:
+        formats = json.loads(entry.get("custom_formats") or "[]")
+    except (json.JSONDecodeError, ValueError):
+        formats = []
+    return {
+        "event":           "sync",
+        "title":           title,
+        "message":         body,
+        "status":          entry.get("status", ""),
+        "label":           entry.get("label", ""),
+        "path":            entry.get("path", ""),
+        "episode":         _parse_episode_field(entry.get("episode", ""))[0],
+        "quality":         entry.get("quality", ""),
+        "quality_profile": entry.get("quality_profile", ""),
+        "custom_formats":  formats,
+        "duration_s":      entry.get("duration_s", 0),
+        "error":           entry.get("error", ""),
+        "ts":              entry.get("ts", now_local().isoformat()),
+    }, None, None
+
+
+def parse_notify_urls(raw: str) -> list:
+    """Split a NOTIFY_URLS value into individual targets.
+
+    Comma- and newline-separated lists are both accepted, so a single-line env
+    var and the multi-line Settings field behave the same. Commas match
+    Apprise's own convention for listing targets.
+    """
+    if not raw:
+        return []
+    out = []
+    for chunk in re.split(r'[,\r\n]+', raw):
+        target = chunk.strip()
+        if target and target not in out:
+            out.append(target)
+    return out
+
+
+def redact_notify_url(url: str) -> str:
+    """Reduce a target to something safe to log or show in the UI.
+
+    Notification URLs carry bearer tokens in the host, path or query
+    (`discord://id/TOKEN`, `?token=…`), so only the scheme — plus the host for
+    plain webhooks, where it identifies the target without being the secret —
+    is ever echoed back.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "(invalid url)"
+    if not parts.scheme:
+        return "(invalid url)"
+    if parts.scheme in ("http", "https") and parts.hostname:
+        return f"{parts.scheme}://{parts.hostname}"
+    return f"{parts.scheme}://…"
+
+
+def notify_url_supported(url: str) -> bool:
+    """True when some sender can deliver to this target.
+
+    Used to validate the Settings field: Apprise rejects a URL whose scheme it
+    doesn't know or whose credentials are malformed, and anything left has to
+    be a plain http(s) webhook for the built-in sender to use.
+    """
+    if _apprise_accepts(url):
+        return True
+    return url.lower().startswith(("http://", "https://"))
+
+
+def _apprise_accepts(url: str) -> bool:
+    """True when Apprise is installed and can parse this target."""
+    if apprise is None:
+        return False
+    try:
+        return bool(apprise.Apprise().add(url))
+    except Exception:
+        return False
+
+
+def _send_via_apprise(entry: dict, url: str, title: str, body: str) -> tuple:
+    """Deliver through Apprise. Returns (handled, ok, detail).
+
+    `handled` is False when Apprise isn't available or doesn't recognise the
+    target, which hands it to the HTTP sender instead.
+    """
+    if apprise is None:
+        return False, False, ""
+    try:
+        apobj = apprise.Apprise()
+        if not apobj.add(url):
+            return False, False, ""
+    except Exception:
+        return False, False, ""
+
+    notify_type = (apprise.NotifyType.FAILURE if entry.get("status") == "error"
+                   else apprise.NotifyType.SUCCESS)
+    try:
+        ok = apobj.notify(title=title, body=body, notify_type=notify_type,
+                          body_format=apprise.NotifyFormat.TEXT)
+    except Exception as exc:
+        log.warning("[NOTIFY] Apprise error for %s: %s", redact_notify_url(url), exc)
+        return True, False, "the notification service raised an error"
+    if not ok:
+        return True, False, "the notification service rejected the message"
+    return True, True, "apprise"
+
+
+def _send_via_http(entry: dict, url: str, title: str, body: str) -> tuple:
+    """POST to a plain webhook. Returns (ok, detail).
+
+    Also the fallback for every target when Apprise isn't installed, so the
+    per-provider payload shaping below still matters.
+    """
+    if not url.lower().startswith(("http://", "https://")):
+        return False, "unsupported URL scheme"
+
+    provider = _notify_provider(url)
+    json_body, data_body, headers = _notification_payload(provider, entry, title, body)
+    try:
+        res = requests.post(url, json=json_body, data=data_body, headers=headers,
+                            timeout=_NOTIFY_TIMEOUT)
+    except requests.RequestException as exc:
+        log.warning("[NOTIFY] %s request to %s failed: %s", provider, redact_notify_url(url), exc)
+        return False, f"could not reach the {provider} endpoint"
+
+    if not res.ok:
+        log.warning("[NOTIFY] %s at %s returned HTTP %d: %s", provider,
+                    redact_notify_url(url), res.status_code, res.text[:200])
+        return False, f"{provider} returned HTTP {res.status_code}"
+    return True, provider
+
+
+def send_notification(entry: dict, urls: str = "") -> tuple:
+    """Deliver one notification to every configured target.
+
+    Returns (ok, detail) and never raises. `ok` is True when at least one
+    target accepted the notification — one dead webhook shouldn't hide the
+    fact that the others were reached. `detail` is safe to show in the UI:
+    every target is redacted to scheme (and host, for plain webhooks).
+    """
+    targets = parse_notify_urls(urls or NOTIFY_URLS)
+    if not targets:
+        return False, "no notification URL configured"
+
+    title, body = _notification_content(entry)
+    sent, failures = [], []
+
+    for target in targets:
+        handled, ok, detail = _send_via_apprise(entry, target, title, body)
+        if not handled:
+            ok, detail = _send_via_http(entry, target, title, body)
+        if ok:
+            sent.append(redact_notify_url(target))
+        else:
+            failures.append(f"{redact_notify_url(target)} ({detail})")
+
+    if sent:
+        log.info("[NOTIFY] Sent %s notification to %d/%d target(s): %s",
+                 entry.get("status", "test"), len(sent), len(targets), ", ".join(sent))
+    if failures:
+        log.warning("[NOTIFY] %d/%d target(s) failed: %s",
+                    len(failures), len(targets), "; ".join(failures))
+
+    if not sent:
+        return False, "; ".join(failures)
+    if failures:
+        return True, f"{len(sent)} of {len(targets)} targets (failed: {'; '.join(failures)})"
+    # All targets succeeded: name the single one, or just count them.
+    return True, sent[0] if len(sent) == 1 else f"all {len(sent)} targets"
+
+
+def notify_sync_result(entry: dict) -> None:
+    """Queue a notification for a finished sync, honouring NOTIFY_ON.
+
+    Dispatched on its own daemon thread: a slow or unreachable webhook must
+    never hold up the single sync worker.
+    """
+    if not NOTIFY_URLS or NOTIFY_ON == "off":
+        return
+    if NOTIFY_ON == "error" and entry.get("status") != "error":
+        return
+    threading.Thread(target=send_notification, args=(dict(entry),),
+                     daemon=True, name="notify").start()
 
 
 # ---------------------------------------------------------------------------
@@ -869,32 +1280,39 @@ def sync_worker():
 
             # Plex scan with retry on timeout
             plex_instance = get_plex()
-            if plex_instance:
-                for attempt in range(1, 4):
-                    try:
-                        library = plex_instance.library.sectionByID(task.section_id)
-                        log.info("[%s] [SCAN] Attempt %d/3 → %s", task.label, attempt, task.mapped_folder)
-                        library.update(path=task.mapped_folder)
+            if plex_instance is None:
+                # Nothing was scanned, so this is not a success. Reporting 'ok'
+                # here meant a Plex outage filled the history with green rows
+                # and — under the default NOTIFY_ON=error — sent no alert at all.
+                raise RuntimeError("Plex is not reachable, no scan was performed")
 
-                        time.sleep(20)
-                        item = _find_plex_item(plex_instance, library, task)
+            for attempt in range(1, 4):
+                try:
+                    library = plex_instance.library.sectionByID(task.section_id)
+                    log.info("[%s] [SCAN] Attempt %d/3 → %s", task.label, attempt, task.mapped_folder)
+                    library.update(path=task.mapped_folder)
 
-                        if item:
-                            log.info("[%s] [METADATA] Found '%s', analyzing...", task.label, item.title)
-                            item.analyze()
-                        else:
-                            log.warning("[%s] [METADATA] Item not found in library DB.", task.label)
-                        break
+                    time.sleep(20)
+                    item = _find_plex_item(plex_instance, library, task)
 
-                    except Exception as exc:
-                        if "timeout" in str(exc).lower() and attempt < 3:
-                            log.warning("[%s] [PLEX] Timeout on attempt %d, retrying in 10s...", task.label, attempt)
-                            # Reconnect in case the connection went stale
-                            invalidate_plex()
-                            plex_instance = get_plex()
-                            time.sleep(10)
-                        else:
-                            raise
+                    if item:
+                        log.info("[%s] [METADATA] Found '%s', analyzing...", task.label, item.title)
+                        item.analyze()
+                    else:
+                        log.warning("[%s] [METADATA] Item not found in library DB.", task.label)
+                    break
+
+                except Exception as exc:
+                    if "timeout" in str(exc).lower() and attempt < 3:
+                        log.warning("[%s] [PLEX] Timeout on attempt %d, retrying in 10s...", task.label, attempt)
+                        # Reconnect in case the connection went stale
+                        invalidate_plex()
+                        plex_instance = get_plex()
+                        if plex_instance is None:
+                            raise RuntimeError("Plex is not reachable, no scan was performed") from exc
+                        time.sleep(10)
+                    else:
+                        raise
 
         except Exception as exc:
             status = "error"
@@ -907,7 +1325,7 @@ def sync_worker():
                     _cooldown[task.mapped_folder] = time.monotonic() + SYNC_COOLDOWN
 
             duration = round(time.monotonic() - start, 1)
-            history.add({
+            entry = {
                 "ts": now_local().isoformat(),
                 "label": task.label,
                 "path": task.mapped_folder,
@@ -918,7 +1336,9 @@ def sync_worker():
                 "quality": task.quality,
                 "custom_formats": task.custom_formats,
                 "quality_profile": task.quality_profile,
-            })
+            }
+            history.add(entry)
+            notify_sync_result(entry)
             sync_queue.task_done()
 
     log.info("Sync worker stopped")
@@ -1065,15 +1485,25 @@ def _merge_episode_counts(existing: str, incoming: str) -> str:
         # Promote any plain strings from the other side to minimal rich objects
         for name in ex_plain:
             if not any(e['f'] == name for e in merged):
+                k = _ep_key(name)
+                if k and k not in seen:
+                    seen[k] = len(merged)
                 merged.append({"f": name, "q": "", "cf": []})
         for obj in in_rich:
             k = _ep_key(obj['f'])
             if k and k in seen:
-                pass  # already have this episode — keep first-seen metadata
-            elif not any(e['f'] == obj['f'] for e in merged):
+                continue  # already have this episode — keep first-seen metadata
+            if not any(e['f'] == obj['f'] for e in merged):
+                if k:
+                    seen[k] = len(merged)
                 merged.append(obj)
         for name in in_plain:
+            k = _ep_key(name)
+            if k and k in seen:
+                continue
             if not any(e['f'] == name for e in merged):
+                if k:
+                    seen[k] = len(merged)
                 merged.append({"f": name, "q": "", "cf": []})
         return json.dumps(merged)
 
@@ -1201,7 +1631,8 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
     # Section mapping
     comp = mapped_folder.rstrip('/').lower()
     section_id = next(
-        (SECTION_MAPPING[p] for p in sorted(SECTION_MAPPING, key=len, reverse=True) if comp.startswith(p)),
+        (SECTION_MAPPING[p] for p in sorted(SECTION_MAPPING, key=len, reverse=True)
+         if path_has_prefix(comp, p)),
         None
     )
 
@@ -1269,6 +1700,20 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
                     log.info("[%s] [COOLDOWN] Recently synced, deferring follow-up scan %.0fs: %s",
                              label, delay, mapped_folder)
                 return {"status": "deferred"}, 200
+
+        # A deferred task may still be waiting on its timer if the cooldown
+        # expired before that timer fired. Fold its accumulated metadata into
+        # this task rather than letting the timer drop it on the floor.
+        stale_pending = _cooldown_pending.pop(mapped_folder, None)
+        if stale_pending:
+            task.episode = _merge_episode_counts(stale_pending.episode, task.episode)
+            task.quality = _merge_qualities(stale_pending.quality, task.quality)
+            if not task.quality_profile:
+                task.quality_profile = stale_pending.quality_profile
+            task.custom_formats = _merge_custom_formats(
+                stale_pending.custom_formats, task.custom_formats)
+            log.info("[%s] [COOLDOWN] Absorbed deferred scan into new task: %s",
+                     label, mapped_folder)
 
         _in_flight[mapped_folder] = task
 
@@ -1690,12 +2135,17 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        if username == MANUAL_USER and password == MANUAL_PASS:
+        # Constant-time comparison so response timing can't be used to probe
+        # the configured username/password character by character.
+        user_ok = _secrets.compare_digest(username, MANUAL_USER)
+        pass_ok = _secrets.compare_digest(password, MANUAL_PASS)
+        if user_ok and pass_ok:
             session.permanent = bool(request.form.get('remember_me'))
             session['authenticated'] = True
-            return redirect(url_for('manual_webhook'))
+            return redirect(safe_next_url(request.form.get('next', '')))
         error = "Invalid username or password."
-    return render_template('login.html', error=error)
+    return render_template('login.html', error=error,
+                           next_url=request.args.get('next', ''))
 
 
 @app.route('/auth/plex/start', methods=['POST'])
@@ -1717,15 +2167,30 @@ def auth_plex_start():
         log.error("[AUTH] Failed to create Plex PIN: %s", exc)
         return jsonify({"error": "Could not reach plex.tv"}), 502
 
+    pin_id, pin_code = data.get("id"), data.get("code")
+    if not pin_id or not pin_code:
+        log.error("[AUTH] Unexpected plex.tv PIN response: %r", data)
+        return jsonify({"error": "Unexpected response from plex.tv"}), 502
+
     auth_url = (
         "https://app.plex.tv/auth#?"
         + urllib.parse.urlencode({
             "clientID": PLEX_IDENTIFIER,
-            "code": data["code"],
+            "code": pin_code,
             "context[device][product]": PLEX_IDENTIFIER,
         })
     )
-    return jsonify({"id": data["id"], "auth_url": auth_url})
+    # Bind the PIN to this browser session. The poll endpoints will only look
+    # up a PIN this same session created, so a caller can't walk plex.tv PIN
+    # ids hunting for one someone else has already claimed.
+    session['plex_pin_id'] = str(pin_id)
+    return jsonify({"id": pin_id, "auth_url": auth_url})
+
+
+def _session_pin_id(pin_id: str) -> bool:
+    """True when `pin_id` is the PIN this browser session created."""
+    expected = str(session.get('plex_pin_id', ''))
+    return bool(expected) and _secrets.compare_digest(str(pin_id), expected)
 
 
 def _poll_plex_pin(pin_id: str):
@@ -1752,11 +2217,14 @@ def auth_plex_poll():
     pin_id = request.args.get('id', '').strip()
     if not pin_id:
         return jsonify({"error": "id required"}), 400
+    if not _session_pin_id(pin_id):
+        return jsonify({"error": "unknown sign-in request"}), 403
     new_token, error = _poll_plex_pin(pin_id)
     if error:
         return error
     if not new_token:
         return jsonify({"authenticated": False})
+    session.pop('plex_pin_id', None)   # single use
 
     # If a Plex account is already configured, only allow that same account
     # to sign in — otherwise any Plex user could log into the admin panel.
@@ -1793,11 +2261,14 @@ def api_plex_token_poll():
     pin_id = request.args.get('id', '').strip()
     if not pin_id:
         return jsonify({"error": "id required"}), 400
+    if not _session_pin_id(pin_id):
+        return jsonify({"error": "unknown sign-in request"}), 403
     token, error = _poll_plex_pin(pin_id)
     if error:
         return error
     if not token:
         return jsonify({"token": None})
+    session.pop('plex_pin_id', None)   # single use
     return jsonify({"token": token})
 
 
@@ -1843,7 +2314,7 @@ def manual_webhook():
         status_filter = ''
 
     # Pagination
-    page = max(1, int(request.args.get('page', 1)))
+    page = safe_int(request.args.get('page', 1), 1, minimum=1)
     per_page = 25
     offset = (page - 1) * per_page
 
@@ -2377,7 +2848,71 @@ SETTINGS_SPEC = [
 
     ("ONBOARD_WIKI_URL", "ONBOARD_WIKI_URL", "Wiki / Setup Guide URL", "url", "Onboarding Links", ""),
     ("ONBOARD_REQUEST_URL", "ONBOARD_REQUEST_URL", "Content Request URL", "url", "Onboarding Links", ""),
+
+    ("NOTIFY_URLS", "NOTIFY_URLS", "Notification URLs", "urls", "Notifications",
+     "discord://webhook_id/webhook_token\nntfy://ntfy.sh/my-topic\nhttps://my-host/hook"),
+    ("NOTIFY_ON", "NOTIFY_ON", "Notify On", "choice", "Notifications", ""),
 ]
+
+# Allowed values for "choice" fields, keyed by env name.
+SETTINGS_CHOICES = {
+    "NOTIFY_ON": [
+        ("error", "Failures only"),
+        ("all",   "Every sync"),
+        ("off",   "Disabled"),
+    ],
+}
+
+
+def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
+    """Validate one submitted Settings field.
+
+    Returns (normalized_value, error_message). Exactly one is meaningful:
+    error_message is None when the value is good. An empty value is always
+    accepted — it means "unset, fall back to the default".
+    """
+    if kind == "bool":
+        return ("true" if raw else "false"), None
+
+    raw = (raw or "").strip()
+
+    if kind == "json":
+        raw = raw or "{}"
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return "", f"{label} is not valid JSON"
+        if not isinstance(parsed, dict):
+            return "", f"{label} must be a JSON object"
+        return raw, None
+
+    if kind == "choice":
+        allowed = [v for v, _lbl in SETTINGS_CHOICES.get(env_name, [])]
+        if raw and allowed and raw not in allowed:
+            return "", f"{label} must be one of: {', '.join(allowed)}"
+        return raw, None
+
+    if kind == "urls" and raw:
+        unsupported = [redact_notify_url(u) for u in parse_notify_urls(raw)
+                       if not notify_url_supported(u)]
+        if unsupported:
+            return "", (f"{label}: unsupported or malformed target(s): "
+                        + ", ".join(unsupported))
+        return raw, None
+
+    if kind == "int" and raw:
+        try:
+            int(raw)
+        except ValueError:
+            return "", f"{label} must be a whole number"
+        return raw, None
+
+    if kind == "duration" and raw:
+        if parse_duration(raw) <= 0 and raw not in ("0", "0s"):
+            return "", f"{label} must be a duration like 30s, 5m, 1h or a plain number of seconds"
+        return raw, None
+
+    return raw, None
 
 
 def _settings_view_model() -> list:
@@ -2393,6 +2928,7 @@ def _settings_view_model() -> list:
             "kind": kind,
             "placeholder": placeholder,
             "value": value,
+            "options": SETTINGS_CHOICES.get(env_name, []),
             "from_env": _cfg_is_env(env_name),
         })
     return [{"name": name, "fields": fields} for name, fields in groups.items()]
@@ -2405,26 +2941,52 @@ def settings_page():
     msg_class = "info"
 
     if request.method == 'POST':
-        for env_name, _global_name, _label, kind, _group, _placeholder in SETTINGS_SPEC:
+        # Validate the whole form before writing anything. Committing field by
+        # field meant a bad value halfway down persisted every field above it
+        # while skipping the load_config() reload, leaving the stored settings
+        # and the running config out of sync.
+        pending: dict = {}
+        errors: list = []
+        for env_name, _global_name, label, kind, _group, _placeholder in SETTINGS_SPEC:
             if _cfg_is_env(env_name):
                 continue  # locked — env var always wins, ignore any submitted value
-            raw = request.form.get(env_name, "")
-            if kind == "bool":
-                raw = "true" if request.form.get(env_name) else "false"
-            elif kind == "json":
-                raw = raw.strip() or "{}"
-                try:
-                    json.loads(raw)
-                except (json.JSONDecodeError, ValueError):
-                    message = f"✗ Invalid JSON for {_label}"
-                    msg_class = "error"
-                    break
-            settings_store.set(env_name, raw)
+            value, err = _validate_setting(env_name, kind, label,
+                                           request.form.get(env_name, ""))
+            if err:
+                errors.append(err)
+            else:
+                pending[env_name] = value
+
+        if errors:
+            message = "✗ " + "; ".join(errors)
+            msg_class = "error"
         else:
+            for env_name, value in pending.items():
+                settings_store.set(env_name, value)
             load_config()
             invalidate_plex()
             message = "✓ Settings saved"
             msg_class = "success"
+
+            # "Save & Send Test" — notify using the configuration that was
+            # just persisted, so the URL POSTed to is always a validated
+            # config value rather than a string off the wire.
+            if request.form.get('action') == 'save_and_test':
+                if not NOTIFY_URLS:
+                    message = "✓ Settings saved — add a Notification URL to send a test"
+                    msg_class = "warn"
+                else:
+                    sent, detail = send_notification({
+                        "test": True,
+                        "status": "ok",
+                        "label": "TEST",
+                        "ts": now_local().isoformat(),
+                    })
+                    if sent:
+                        message = f"✓ Settings saved — test notification sent to {detail}"
+                    else:
+                        message = f"✓ Settings saved, but the test notification failed: {detail}"
+                        msg_class = "warn"
 
     return render_template('settings.html', groups=_settings_view_model(),
                             message=message, msg_class=msg_class)
@@ -2559,14 +3121,14 @@ def api_geoip():
             '_ts':        now,
         }
         with _geo_cache_lock:
-            _geo_cache[safe_ip] = data
+            _geo_cache_put(safe_ip, data)
         out = dict(data)
         out.pop('_ts', None)
         return jsonify(_sanitize_floats(out))
     except Exception as exc:
         log.warning("GeoIP lookup failed for ip=%r: %s", request.args.get('ip'), exc)
         with _geo_cache_lock:
-            _geo_cache[safe_ip] = {'_error': True, '_ts': now}
+            _geo_cache_put(safe_ip, {'_error': True, '_ts': now})
         return jsonify({'error': 'Geolocation lookup failed.'}), 500
 
 
@@ -2652,9 +3214,9 @@ def create_invite():
     allow_sync        = 'allow_sync' in request.form
     allow_channels    = 'allow_channels' in request.form
     home_user         = 'home_user' in request.form
-    duration_days     = int(request.form.get('duration_days', '0') or '0')
-    max_uses          = int(request.form.get('max_uses', '1') or '1')
-    link_expires_days = int(request.form.get('link_expires_days', '7') or '7')
+    duration_days     = safe_int(request.form.get('duration_days'), 0, minimum=0)
+    max_uses          = safe_int(request.form.get('max_uses'), 1, minimum=0)
+    link_expires_days = safe_int(request.form.get('link_expires_days'), 7, minimum=0)
     invite_db.create(label, section_ids, allow_sync, allow_channels, home_user,
                      duration_days, max_uses, link_expires_days)
     return redirect(url_for('invites_page'))
