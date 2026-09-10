@@ -1280,32 +1280,39 @@ def sync_worker():
 
             # Plex scan with retry on timeout
             plex_instance = get_plex()
-            if plex_instance:
-                for attempt in range(1, 4):
-                    try:
-                        library = plex_instance.library.sectionByID(task.section_id)
-                        log.info("[%s] [SCAN] Attempt %d/3 → %s", task.label, attempt, task.mapped_folder)
-                        library.update(path=task.mapped_folder)
+            if plex_instance is None:
+                # Nothing was scanned, so this is not a success. Reporting 'ok'
+                # here meant a Plex outage filled the history with green rows
+                # and — under the default NOTIFY_ON=error — sent no alert at all.
+                raise RuntimeError("Plex is not reachable, no scan was performed")
 
-                        time.sleep(20)
-                        item = _find_plex_item(plex_instance, library, task)
+            for attempt in range(1, 4):
+                try:
+                    library = plex_instance.library.sectionByID(task.section_id)
+                    log.info("[%s] [SCAN] Attempt %d/3 → %s", task.label, attempt, task.mapped_folder)
+                    library.update(path=task.mapped_folder)
 
-                        if item:
-                            log.info("[%s] [METADATA] Found '%s', analyzing...", task.label, item.title)
-                            item.analyze()
-                        else:
-                            log.warning("[%s] [METADATA] Item not found in library DB.", task.label)
-                        break
+                    time.sleep(20)
+                    item = _find_plex_item(plex_instance, library, task)
 
-                    except Exception as exc:
-                        if "timeout" in str(exc).lower() and attempt < 3:
-                            log.warning("[%s] [PLEX] Timeout on attempt %d, retrying in 10s...", task.label, attempt)
-                            # Reconnect in case the connection went stale
-                            invalidate_plex()
-                            plex_instance = get_plex()
-                            time.sleep(10)
-                        else:
-                            raise
+                    if item:
+                        log.info("[%s] [METADATA] Found '%s', analyzing...", task.label, item.title)
+                        item.analyze()
+                    else:
+                        log.warning("[%s] [METADATA] Item not found in library DB.", task.label)
+                    break
+
+                except Exception as exc:
+                    if "timeout" in str(exc).lower() and attempt < 3:
+                        log.warning("[%s] [PLEX] Timeout on attempt %d, retrying in 10s...", task.label, attempt)
+                        # Reconnect in case the connection went stale
+                        invalidate_plex()
+                        plex_instance = get_plex()
+                        if plex_instance is None:
+                            raise RuntimeError("Plex is not reachable, no scan was performed") from exc
+                        time.sleep(10)
+                    else:
+                        raise
 
         except Exception as exc:
             status = "error"
