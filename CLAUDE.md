@@ -59,6 +59,7 @@ templates/
 
 ## Key Internals
 
+- **Cache headers** — an `after_request` hook (`_no_store_by_default`) stamps `no-store, no-cache, must-revalidate, private` on any response that didn't set its own `Cache-Control`. Without it a caching reverse proxy stores authenticated pages and replays them after logout (and to anonymous visitors). Handlers that *want* caching — `/api/thumb`, `/api/maptile`, static files — set `Cache-Control` themselves and are skipped, so never remove those explicit headers assuming the default is harmless
 - **`SyncTask`** — dataclass for a queued scan task
 - **`SyncHistory`** — SQLite3 history at `/data/history.db`; handles dedup and cooldown
 - **`SettingsStore`** — SQLite3 key/value store at `/data/settings.db`. `load_config()` resolves each config value as env var → DB setting → default, and is re-run after a Settings page save to hot-reload without a restart. Fields pinned by an env var are locked (read-only) in the Settings UI.

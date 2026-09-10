@@ -99,6 +99,27 @@ app = Flask(__name__)
 csrf = CSRFProtect(app)
 
 
+@app.after_request
+def _no_store_by_default(resp):
+    """Keep authenticated pages out of every cache.
+
+    Flask sends no Cache-Control at all, so a reverse proxy with caching
+    turned on (nginx proxy_cache, Cloudflare "Cache Everything") will store a
+    rendered, logged-in page and replay it — back to the same user after they
+    log out, and to anonymous visitors who never signed in. Browsers can
+    reuse it for history navigations too.
+
+    Handlers that genuinely want their response cached — the artwork proxy,
+    the map-tile proxy, static files — set their own Cache-Control, and are
+    left exactly as they are.
+    """
+    if 'Cache-Control' not in resp.headers:
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+    return resp
+
+
 @app.template_filter('datetimeformat')
 def _datetimeformat(ts):
     """Format a Unix timestamp as a local date/time string."""
