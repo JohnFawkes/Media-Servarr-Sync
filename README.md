@@ -30,7 +30,7 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Configurable delay** — wait N seconds after the webhook before scanning (gives Sonarr/Radarr time to finish writing)
 - **Minimum file age** — optionally hold off scanning until a file is at least N seconds old
 - **Retry on timeout** — Plex scan attempts retry up to 3 times with automatic reconnection on stale sessions
-- **Notifications** — POST a summary of every sync (or just the failures) to Discord, Slack, Gotify, ntfy, or any webhook that accepts JSON; the service is detected from the URL, and a **Save & Send Test** button on the Settings page confirms it works
+- **Notifications** — send a summary of every sync (or just the failures) to one or more targets: Discord, Telegram, Slack, ntfy, Gotify, email, Matrix and 100+ more via [Apprise](https://github.com/caronc/apprise/wiki), or any webhook that accepts JSON. A **Save & Send Test** button on the Settings page confirms they work
 - **Health endpoint** — `/health` exposes queue depth, Plex connectivity, rclone mode, and recent sync history
 - **Stats API** — `/api/stats` returns aggregate sync counts, queue state, and last sync info — ready for [Homepage](https://gethomepage.dev) `customapi` widget
 - **Manual trigger UI** — password-protected web UI at `/` for ad-hoc scans
@@ -116,7 +116,7 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `MANUAL_USER` | | `admin` | Username for the manual trigger UI |
 | `MANUAL_PASS` | | `changeme` | Password for the manual trigger UI |
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
-| `NOTIFY_URL` | | — | Webhook URL to POST a summary to when a sync finishes. See [Notifications](#notifications) |
+| `NOTIFY_URLS` | | — | One or more notification targets (comma- or newline-separated). Any [Apprise](https://github.com/caronc/apprise/wiki) URL, or a plain webhook. See [Notifications](#notifications) |
 | `NOTIFY_ON` | | `error` | Which results to send: `error` (failures only), `all` (every sync), or `off` |
 | `MEDIA_ROOT` | | `/mnt/media` | Host path to your media root, mounted into the container (only needed if `MINIMUM_AGE > 0`) |
 | `CONTAINER_MEDIA` | | `/mnt/media` | Path **inside this container** where `MEDIA_ROOT` is mounted — must match the path Plex uses to see your files |
@@ -137,17 +137,34 @@ Set `USE_RCLONE=true` **only** if you serve your media through an rclone VFS mou
 ### Notifications
 
 A failed scan is otherwise invisible until you happen to open the dashboard. Set
-`NOTIFY_URL` to a webhook and every sync result matching `NOTIFY_ON` is posted to it.
+`NOTIFY_URLS` to one or more targets and every sync result matching `NOTIFY_ON`
+is sent to all of them.
 
-The service is inferred from the URL, so there's nothing else to configure:
+Targets are separated by commas or newlines, so you can fan out to several
+places at once:
 
-| Service | Matched on | Sent as |
-|---|---|---|
-| Discord | `discord.com` / `discordapp.com` host | Webhook embed, green on success, red on failure |
-| Slack | `hooks.slack.com` host | `text` message |
-| Gotify | URL path ending in `/message` | `{title, message, priority}` (priority 8 on failure, 4 otherwise) |
-| ntfy | `ntfy` in the host | Plain-text body with `Title`, `Priority` and `Tags` headers |
-| Anything else | fallback | JSON POST (see below) |
+```env
+NOTIFY_URLS=discord://webhook_id/webhook_token,ntfy://ntfy.sh/my-topic
+```
+
+Delivery goes through [Apprise](https://github.com/caronc/apprise/wiki), so
+anything on its [supported-services list](https://github.com/caronc/apprise/wiki#notification-services)
+works — 100+ of them. A few common ones:
+
+| Service | Example target |
+|---|---|
+| Discord | `discord://webhook_id/webhook_token` (or paste the raw webhook URL) |
+| Slack | `slack://TokenA/TokenB/TokenC/#channel` (or the raw `hooks.slack.com` URL) |
+| ntfy | `ntfy://ntfy.sh/my-topic`, or `https://ntfy.sh/my-topic` |
+| Gotify | `gotify://gotify.example.com/token` |
+| Telegram | `tgram://bot_token/chat_id` |
+| Pushover | `pover://user_key@app_token` |
+| Email | `mailto://user:pass@gmail.com` |
+| Matrix | `matrix://user:pass@matrix.org/#room` |
+| Generic JSON | `json://host/path` — Apprise's own payload format |
+
+Failures are sent with a raised priority (and shown red in Discord); successes
+are sent as normal-priority / green.
 
 `NOTIFY_ON` accepts:
 
@@ -158,13 +175,19 @@ The service is inferred from the URL, so there's nothing else to configure:
 | `off` | Nothing |
 
 Notifications are dispatched on a background thread, so a slow or unreachable
-webhook never delays a scan — a delivery failure is logged and dropped.
+target never delays a scan. Each target is delivered independently — one dead
+webhook doesn't stop the others — and any failures are logged with the target
+redacted to its scheme and host, so tokens never reach the log.
 
 The Settings page has a **Save & Send Test** button that saves your settings and
-then fires a test notification using the URL it just stored, so you can confirm a
-webhook works end to end.
+then fires a test notification to every configured target, so you can confirm
+they work end to end. Targets are validated on save: an unusable URL is reported
+rather than silently swallowed.
 
-The generic (non-Discord/Slack/Gotify/ntfy) payload:
+#### Plain webhooks
+
+Any `http(s)://` URL that Apprise doesn't recognise as a specific service gets
+the full sync result as a JSON POST — useful for wiring into your own script:
 
 ```json
 {
@@ -183,6 +206,11 @@ The generic (non-Discord/Slack/Gotify/ntfy) payload:
   "ts": "2026-01-01T00:00:00-05:00"
 }
 ```
+
+Bare Gotify `/message?token=…` URLs are also handled directly. Apprise is an
+optional dependency: if it isn't installed, plain webhooks plus raw
+Discord/Slack/Gotify/ntfy URLs still work, and other schemes are reported as
+unsupported.
 
 ### Duration format
 

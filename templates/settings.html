@@ -155,6 +155,12 @@
     display: block; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
     color: var(--accent); margin-bottom: 4px;
   }
+  .hint-text code {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 3px; padding: 0 3px;
+  }
+  .hint-text a { color: var(--info); }
 
   .btn-plex-token {
     align-self: flex-start; margin-bottom: 4px;
@@ -228,7 +234,7 @@
       <div class="card-label">{{ group.name }}</div>
       <div class="form-grid">
         {% for f in group.fields %}
-        <div class="field {% if f.kind == 'json' %}field-full{% endif %}">
+        <div class="field {% if f.kind in ('json', 'urls') %}field-full{% endif %}">
           <label for="fld-{{ f.env_name }}">
             {{ f.label }}
             {% if f.from_env %}<span class="badge badge-env">Set via environment</span>{% endif %}
@@ -247,8 +253,8 @@
           <button type="button" class="btn-outline btn-plex-token" id="grab-token-btn">Get Token via Plex Sign-In</button>
           <span id="grab-token-status" class="discover-status"></span>
           {% endif %}
-          {% if f.env_name == 'NOTIFY_URL' %}
-          <span class="hint-text">Discord, Slack, Gotify and ntfy webhooks are detected automatically; anything else receives a plain JSON POST. Use <em>Save &amp; Send Test</em> below to check it.</span>
+          {% if f.env_name == 'NOTIFY_URLS' %}
+          <span class="hint-text">One target per line (or comma-separated). Any <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">Apprise</a> URL works — <code>discord://</code>, <code>tgram://</code>, <code>mailto://</code>, <code>ntfy://</code>, <code>gotify://</code> and 100+ more — as do raw Discord/Slack/ntfy webhook URLs. Any other <code>http(s)://</code> URL receives a plain JSON POST. Use <em>Save &amp; Send Test</em> below to check them.</span>
           {% endif %}
           {% if f.kind == 'choice' %}
           <select id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
@@ -264,9 +270,10 @@
                    {% if f.from_env %}disabled{% endif %}>
             <span>Enabled</span>
           </div>
-          {% elif f.kind == 'json' %}
+          {% elif f.kind in ('json', 'urls') %}
           <textarea id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
                     placeholder="{{ f.placeholder }}"
+                    {% if f.kind == 'urls' %}rows="3" spellcheck="false"{% endif %}
                     {% if f.from_env %}disabled{% endif %}>{{ f.value }}</textarea>
           {% else %}
           <input type="{{ 'password' if f.kind == 'password' else 'text' }}"

@@ -35,6 +35,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import plexapi
 from waitress import serve
+
+try:
+    import apprise
+except ImportError:                       # pragma: no cover - optional dependency
+    apprise = None
+
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response, send_file
 from flask_wtf.csrf import CSRFProtect
 from dotenv import load_dotenv
@@ -82,6 +88,12 @@ _handler.setFormatter(_TZFormatter(
 ))
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger(__name__)
+
+# Apprise is silenced because we report every outcome ourselves, and its own
+# output is misleading here: probing whether it can handle a target logs
+# "Unparseable URL" at ERROR for every plain webhook, which is an expected
+# case that falls through to the built-in HTTP sender.
+logging.getLogger('apprise').setLevel(logging.CRITICAL)
 
 app = Flask(__name__)
 csrf = CSRFProtect(app)
@@ -258,7 +270,7 @@ def load_config():
         ONBOARD_WIKI_URL, ONBOARD_REQUEST_URL, USE_RCLONE, RCLONE_RC_URL, \
         RCLONE_RC_USER, RCLONE_RC_PASS, RCLONE_MOUNT_ROOT, PLEX_IDENTIFIER, \
         PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING, \
-        NOTIFY_URL, NOTIFY_ON
+        NOTIFY_URLS, NOTIFY_ON
 
     PLEX_URL        = _cfg_raw("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
     PLEX_TOKEN      = _cfg_raw("PLEX_TOKEN", "")
@@ -283,10 +295,12 @@ def load_config():
     ONBOARD_WIKI_URL    = _cfg_raw("ONBOARD_WIKI_URL", "").rstrip('/')
     ONBOARD_REQUEST_URL = _cfg_raw("ONBOARD_REQUEST_URL", "").rstrip('/')
 
-    # Notifications — POST a summary to Discord/Slack/Gotify/ntfy/any webhook
-    # when a sync finishes. NOTIFY_ON: 'error' (default), 'all', or 'off'.
-    NOTIFY_URL = _cfg_raw("NOTIFY_URL", "").strip()
-    NOTIFY_ON  = _cfg_raw("NOTIFY_ON", "error").strip().lower()
+    # Notifications — one or more targets notified when a sync finishes.
+    # Anything Apprise understands (discord://, tgram://, mailto://, …) plus
+    # plain http(s) webhooks. NOTIFY_ON: 'error' (default), 'all', or 'off'.
+    # NOTIFY_URL is the original single-target name, kept as an alias.
+    NOTIFY_URLS = _cfg_raw("NOTIFY_URLS", "").strip() or _cfg_raw("NOTIFY_URL", "").strip()
+    NOTIFY_ON   = _cfg_raw("NOTIFY_ON", "error").strip().lower()
     if NOTIFY_ON not in NOTIFY_ON_CHOICES:
         log.warning("Unknown NOTIFY_ON value %r — falling back to 'error'", NOTIFY_ON)
         NOTIFY_ON = "error"
@@ -933,8 +947,14 @@ def rclone_vfs_refresh(host_path: str, label: str):
 # Notifications
 # ---------------------------------------------------------------------------
 # A sync failure is otherwise invisible until somebody opens the dashboard.
-# NOTIFY_URL points at a Discord/Slack/Gotify/ntfy webhook (or any endpoint
-# that accepts a JSON POST); NOTIFY_ON decides which results are worth sending.
+# NOTIFY_URLS lists one or more targets; NOTIFY_ON decides which results are
+# worth sending.
+#
+# Each target is handed to Apprise first, which covers 100+ services and also
+# understands raw Discord, Slack and ntfy webhook URLs. Whatever Apprise won't
+# parse — a bare Gotify `/message?token=` URL, or any endpoint that just wants
+# JSON — falls through to the built-in HTTP sender below, which is also the
+# whole path when Apprise isn't installed.
 
 _NOTIFY_TIMEOUT = 10
 
@@ -1054,29 +1074,154 @@ def _notification_payload(provider: str, entry: dict, title: str, body: str):
     }, None, None
 
 
-def send_notification(entry: dict, url: str = "") -> tuple:
-    """POST one notification. Returns (ok, detail) — never raises."""
-    url = (url or NOTIFY_URL).strip()
-    if not url:
-        return False, "No notification URL configured"
+def parse_notify_urls(raw: str) -> list:
+    """Split a NOTIFY_URLS value into individual targets.
+
+    Comma- and newline-separated lists are both accepted, so a single-line env
+    var and the multi-line Settings field behave the same. Commas match
+    Apprise's own convention for listing targets.
+    """
+    if not raw:
+        return []
+    out = []
+    for chunk in re.split(r'[,\r\n]+', raw):
+        target = chunk.strip()
+        if target and target not in out:
+            out.append(target)
+    return out
+
+
+def redact_notify_url(url: str) -> str:
+    """Reduce a target to something safe to log or show in the UI.
+
+    Notification URLs carry bearer tokens in the host, path or query
+    (`discord://id/TOKEN`, `?token=…`), so only the scheme — plus the host for
+    plain webhooks, where it identifies the target without being the secret —
+    is ever echoed back.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "(invalid url)"
+    if not parts.scheme:
+        return "(invalid url)"
+    if parts.scheme in ("http", "https") and parts.hostname:
+        return f"{parts.scheme}://{parts.hostname}"
+    return f"{parts.scheme}://…"
+
+
+def notify_url_supported(url: str) -> bool:
+    """True when some sender can deliver to this target.
+
+    Used to validate the Settings field: Apprise rejects a URL whose scheme it
+    doesn't know or whose credentials are malformed, and anything left has to
+    be a plain http(s) webhook for the built-in sender to use.
+    """
+    if _apprise_accepts(url):
+        return True
+    return url.lower().startswith(("http://", "https://"))
+
+
+def _apprise_accepts(url: str) -> bool:
+    """True when Apprise is installed and can parse this target."""
+    if apprise is None:
+        return False
+    try:
+        return bool(apprise.Apprise().add(url))
+    except Exception:
+        return False
+
+
+def _send_via_apprise(entry: dict, url: str, title: str, body: str) -> tuple:
+    """Deliver through Apprise. Returns (handled, ok, detail).
+
+    `handled` is False when Apprise isn't available or doesn't recognise the
+    target, which hands it to the HTTP sender instead.
+    """
+    if apprise is None:
+        return False, False, ""
+    try:
+        apobj = apprise.Apprise()
+        if not apobj.add(url):
+            return False, False, ""
+    except Exception:
+        return False, False, ""
+
+    notify_type = (apprise.NotifyType.FAILURE if entry.get("status") == "error"
+                   else apprise.NotifyType.SUCCESS)
+    try:
+        ok = apobj.notify(title=title, body=body, notify_type=notify_type,
+                          body_format=apprise.NotifyFormat.TEXT)
+    except Exception as exc:
+        log.warning("[NOTIFY] Apprise error for %s: %s", redact_notify_url(url), exc)
+        return True, False, "the notification service raised an error"
+    if not ok:
+        return True, False, "the notification service rejected the message"
+    return True, True, "apprise"
+
+
+def _send_via_http(entry: dict, url: str, title: str, body: str) -> tuple:
+    """POST to a plain webhook. Returns (ok, detail).
+
+    Also the fallback for every target when Apprise isn't installed, so the
+    per-provider payload shaping below still matters.
+    """
+    if not url.lower().startswith(("http://", "https://")):
+        return False, "unsupported URL scheme"
 
     provider = _notify_provider(url)
-    title, body = _notification_content(entry)
     json_body, data_body, headers = _notification_payload(provider, entry, title, body)
-
     try:
         res = requests.post(url, json=json_body, data=data_body, headers=headers,
                             timeout=_NOTIFY_TIMEOUT)
     except requests.RequestException as exc:
-        log.warning("[NOTIFY] %s request failed: %s", provider, exc)
-        return False, f"Could not reach the {provider} endpoint"
+        log.warning("[NOTIFY] %s request to %s failed: %s", provider, redact_notify_url(url), exc)
+        return False, f"could not reach the {provider} endpoint"
 
     if not res.ok:
-        log.warning("[NOTIFY] %s returned HTTP %d: %s", provider, res.status_code, res.text[:200])
+        log.warning("[NOTIFY] %s at %s returned HTTP %d: %s", provider,
+                    redact_notify_url(url), res.status_code, res.text[:200])
         return False, f"{provider} returned HTTP {res.status_code}"
-
-    log.info("[NOTIFY] Sent %s notification (%s)", provider, entry.get("status", "test"))
     return True, provider
+
+
+def send_notification(entry: dict, urls: str = "") -> tuple:
+    """Deliver one notification to every configured target.
+
+    Returns (ok, detail) and never raises. `ok` is True when at least one
+    target accepted the notification — one dead webhook shouldn't hide the
+    fact that the others were reached. `detail` is safe to show in the UI:
+    every target is redacted to scheme (and host, for plain webhooks).
+    """
+    targets = parse_notify_urls(urls or NOTIFY_URLS)
+    if not targets:
+        return False, "no notification URL configured"
+
+    title, body = _notification_content(entry)
+    sent, failures = [], []
+
+    for target in targets:
+        handled, ok, detail = _send_via_apprise(entry, target, title, body)
+        if not handled:
+            ok, detail = _send_via_http(entry, target, title, body)
+        if ok:
+            sent.append(redact_notify_url(target))
+        else:
+            failures.append(f"{redact_notify_url(target)} ({detail})")
+
+    if sent:
+        log.info("[NOTIFY] Sent %s notification to %d/%d target(s): %s",
+                 entry.get("status", "test"), len(sent), len(targets), ", ".join(sent))
+    if failures:
+        log.warning("[NOTIFY] %d/%d target(s) failed: %s",
+                    len(failures), len(targets), "; ".join(failures))
+
+    if not sent:
+        return False, "; ".join(failures)
+    if failures:
+        return True, f"{len(sent)} of {len(targets)} targets (failed: {'; '.join(failures)})"
+    # All targets succeeded: name the single one, or just count them.
+    return True, sent[0] if len(sent) == 1 else f"all {len(sent)} targets"
 
 
 def notify_sync_result(entry: dict) -> None:
@@ -1085,7 +1230,7 @@ def notify_sync_result(entry: dict) -> None:
     Dispatched on its own daemon thread: a slow or unreachable webhook must
     never hold up the single sync worker.
     """
-    if not NOTIFY_URL or NOTIFY_ON == "off":
+    if not NOTIFY_URLS or NOTIFY_ON == "off":
         return
     if NOTIFY_ON == "error" and entry.get("status") != "error":
         return
@@ -2697,8 +2842,8 @@ SETTINGS_SPEC = [
     ("ONBOARD_WIKI_URL", "ONBOARD_WIKI_URL", "Wiki / Setup Guide URL", "url", "Onboarding Links", ""),
     ("ONBOARD_REQUEST_URL", "ONBOARD_REQUEST_URL", "Content Request URL", "url", "Onboarding Links", ""),
 
-    ("NOTIFY_URL", "NOTIFY_URL", "Notification URL", "url", "Notifications",
-     "https://discord.com/api/webhooks/..."),
+    ("NOTIFY_URLS", "NOTIFY_URLS", "Notification URLs", "urls", "Notifications",
+     "discord://webhook_id/webhook_token\nntfy://ntfy.sh/my-topic\nhttps://my-host/hook"),
     ("NOTIFY_ON", "NOTIFY_ON", "Notify On", "choice", "Notifications", ""),
 ]
 
@@ -2738,6 +2883,14 @@ def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
         allowed = [v for v, _lbl in SETTINGS_CHOICES.get(env_name, [])]
         if raw and allowed and raw not in allowed:
             return "", f"{label} must be one of: {', '.join(allowed)}"
+        return raw, None
+
+    if kind == "urls" and raw:
+        unsupported = [redact_notify_url(u) for u in parse_notify_urls(raw)
+                       if not notify_url_supported(u)]
+        if unsupported:
+            return "", (f"{label}: unsupported or malformed target(s): "
+                        + ", ".join(unsupported))
         return raw, None
 
     if kind == "int" and raw:
@@ -2812,8 +2965,8 @@ def settings_page():
             # just persisted, so the URL POSTed to is always a validated
             # config value rather than a string off the wire.
             if request.form.get('action') == 'save_and_test':
-                if not NOTIFY_URL:
-                    message = "✓ Settings saved — set a Notification URL to send a test"
+                if not NOTIFY_URLS:
+                    message = "✓ Settings saved — add a Notification URL to send a test"
                     msg_class = "warn"
                 else:
                     sent, detail = send_notification({
@@ -2823,7 +2976,7 @@ def settings_page():
                         "ts": now_local().isoformat(),
                     })
                     if sent:
-                        message = f"✓ Settings saved — test notification sent via {detail}"
+                        message = f"✓ Settings saved — test notification sent to {detail}"
                     else:
                         message = f"✓ Settings saved, but the test notification failed: {detail}"
                         msg_class = "warn"
