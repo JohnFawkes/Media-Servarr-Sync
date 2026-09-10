@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [v0.25.0] - 2026-09-10
 
 ### Added
 - **Notifications** — a new `NOTIFY_URLS` setting sends a summary of each finished sync to one or more targets, so a failed scan no longer goes unnoticed until someone opens the dashboard. Delivery goes through [Apprise](https://github.com/caronc/apprise/wiki), so Discord, Telegram, Slack, ntfy, Gotify, email, Matrix, Pushover and 100+ other services work by URL (`discord://…`, `tgram://…`, `mailto://…`), as do raw Discord/Slack/ntfy webhook URLs. Failures are sent with raised priority and shown red in Discord. Any other `http(s)://` URL — plus bare Gotify `/message?token=` URLs — is handled directly, receiving the full result as a structured JSON POST: status, path, episode, quality, profile, custom formats, duration and error. Targets are comma- or newline-separated and delivered independently, so one dead webhook doesn't stop the rest; `NOTIFY_ON` selects `error` (failures only, the default), `all`, or `off`. Delivery runs on a background thread so a slow or unreachable target never delays a scan, and the Settings page has a **Save & Send Test** button that saves and then notifies every configured target. Targets are validated on save, and are redacted to scheme and host everywhere they're logged or displayed, since these URLs embed tokens. Apprise is an optional dependency — without it, plain webhooks and raw Discord/Slack/Gotify/ntfy URLs still work.
