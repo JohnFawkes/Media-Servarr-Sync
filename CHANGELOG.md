@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [v0.26.0] - 2026-09-10
 
 ### Security
 - **Logged-in pages could be cached and replayed after logout** — responses carried no `Cache-Control` header at all, so any caching layer in front of the app (nginx `proxy_cache`, Nginx Proxy Manager, a Cloudflare "Cache Everything" rule) was free to store a rendered, authenticated page and serve it back later. The visible symptom was appearing to be logged straight back in after logging out and revisiting the site; the same cached page was also served to visitors who had never signed in at all, exposing sync history, media paths and Now Playing details. Every response now defaults to `no-store, no-cache, must-revalidate, private`, which also stops browsers reusing an authenticated page for history navigations. Endpoints that intentionally cache — the artwork proxy, the map-tile proxy and static files — set their own `Cache-Control` and are unaffected.
