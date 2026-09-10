@@ -31,6 +31,8 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `WEBHOOK_DELAY` | no | `30s` | Wait before scanning (e.g. `30s`, `5m`) |
 | `USE_RCLONE` | no | `false` | Enable rclone VFS cache clearing |
 | `TZ` | no | `UTC` | IANA timezone name |
+| `NOTIFY_URLS` | no | — | Notification targets, comma/newline separated — any Apprise URL, or a plain JSON webhook |
+| `NOTIFY_ON` | no | `error` | Which results to send: `error`, `all`, or `off` |
 | `ONBOARD_WIKI_URL` | no | — | Link to setup/wiki shown on invite onboard page |
 | `ONBOARD_REQUEST_URL` | no | — | Link to content request site shown on invite onboard page |
 
@@ -48,8 +50,9 @@ templates/
   login.html            Login page
   onboarding.html        First-run setup wizard (admin password + connect Plex), shown instead of login.html until PLEX_TOKEN is configured
   settings.html          Settings page — view/edit config, Plex server discovery, grab-token button
-  manual_ui.html        Outer shell (header, PJAX script, nav); also serves the Sync tab page-content
-  now_playing.html      Now Playing page (active Plex streams, geolocation maps, library scan)
+  manual_ui.html        Outer shell (header, PJAX script, nav); also serves the Sync tab page-content,
+                        which includes Now Playing (active Plex streams + geolocation maps),
+                        Server Stats, and the full-library-scan picker
   invites.html          Invite management page (create / revoke invite links and grants)
   invite_onboard.html   Public invite acceptance flow (/invite/<token> and /invite/<token>/accept) — unrelated to onboarding.html, which is the admin first-run setup
 ```
@@ -60,6 +63,9 @@ templates/
 - **`SyncHistory`** — SQLite3 history at `/data/history.db`; handles dedup and cooldown
 - **`SettingsStore`** — SQLite3 key/value store at `/data/settings.db`. `load_config()` resolves each config value as env var → DB setting → default, and is re-run after a Settings page save to hot-reload without a restart. Fields pinned by an env var are locked (read-only) in the Settings UI.
 - **Background worker** (`sync_worker`) — drains the queue with configurable `WEBHOOK_DELAY`
+- **Notifications** — `notify_sync_result()` is called from `sync_worker` with the same dict written to history. It honours `NOTIFY_ON` and dispatches `send_notification()` on a daemon thread so webhook latency never blocks a scan. `send_notification()` splits `NOTIFY_URLS` via `parse_notify_urls()` and delivers each target independently, returning ok if *any* succeeded. Per target: `_send_via_apprise()` first (Apprise covers 100+ services and also parses raw Discord/Slack/ntfy webhook URLs); it returns `handled=False` for anything Apprise can't parse, which falls through to `_send_via_http()` — that path keeps `_notify_provider()` / `_notification_payload()` for bare Gotify URLs and generic structured-JSON webhooks, and is the whole path when `apprise` isn't installed (the import is optional). Every target is passed through `redact_notify_url()` before it reaches a log or the UI, since these URLs embed tokens. The Apprise logger is set to CRITICAL: probing whether it handles a target logs "Unparseable URL" at ERROR for every plain webhook, which is expected here. The URL notified always comes from validated config, never a request body — the Settings form's `action=save_and_test` button saves first, then notifies
+- **Settings validation** — `_validate_setting()` checks every submitted field (`json`, `int`, `duration`, `choice`) *before* anything is written, so a save is all-or-nothing. `SETTINGS_CHOICES` supplies the options for `choice` fields
+- **Path prefix matching** — `path_has_prefix()` is the only correct way to test a path against a `SECTION_MAPPING` / `PATH_REPLACEMENTS` key; a bare `str.startswith` matches mid-segment (`/mnt/media/tv` vs `/mnt/media/tv4k`). Use `safe_int()` for anything user-supplied that must be an integer — `load_config()` runs at import, so a raising conversion there prevents startup entirely
 - **Deduplication** — duplicate webhooks for the same folder are merged while a task is in-flight
 - **Quality/custom format caching** — fetched from Sonarr/Radarr API, refreshed every 6 hours
 - **PJAX navigation** — nav-link clicks swap only `#page-content` and `#page-style` in-place; `manual_ui.html` is the persistent outer shell and all other page templates supply only their inner content block. Cleanup callbacks registered as `window.__pjaxCleanup` are called before each swap.
@@ -72,7 +78,6 @@ templates/
 | `/webhook/sonarr` | POST | none (CSRF exempt) | Sonarr webhook receiver |
 | `/webhook/radarr` | POST | none (CSRF exempt) | Radarr webhook receiver |
 | `/` | GET/POST | session | Sync tab — manual scan UI + history |
-| `/now-playing` | GET | session | Now Playing tab — active Plex streams |
 | `/invites` | GET | session | Invite management tab |
 | `/invites/create` | POST | session | Create a new invite link |
 | `/invites/revoke/<token>` | POST | session | Revoke an invite link |
@@ -93,6 +98,9 @@ templates/
 | `/api/scan/library` | POST | session (CSRF exempt) | Trigger a full Plex library section scan |
 | `/api/libraries` | GET | session | List Plex library sections |
 | `/api/geoip` | GET | session | Server-side IP geolocation proxy (cached) |
+| `/api/maptile/<z>/<x>/<y>.png` | GET | session | Proxy + 24 h disk cache for OpenStreetMap tiles |
+| `/api/server-stats` | GET | session | Plex server CPU / RAM / bandwidth stats |
+| `/api/plex-update` | GET | session | Whether a Plex Media Server update is available (cached 1 h) |
 | `/api/thumb` | GET | session | Proxy Plex artwork thumbnails |
 
 ## Skipped Webhook Events
