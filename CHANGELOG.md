@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Update dependency python-dotenv to v1.2.4
 - Update dependency plexapi to v4.18.3
 
 ---
