@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14-slim AS base
+FROM python:3.15-slim AS base
 
 # ── System deps ──────────────────────────────────────────────────────────────
 # upgrade picks up security patches for packages already in the base image
