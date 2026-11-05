@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- **Image scanners flagged vulnerable urllib3, msgpack and setuptools** — none of these come from the app's own dependencies. They are copies bundled inside `pip` itself, both the base image's system pip (urllib3 2.7.0, msgpack 1.1.2) and the venv's pip, and even the newest pip still bundles setuptools 70.3.0. pip is only needed while the image is being built, so it is now uninstalled from both the venv and the system Python once the requirements are in. This clears the 7 open Trivy alerts. The app's own urllib3 (pulled in by `requests`) is unaffected and at a fixed version.
+
 ### Changed
 - Update sigstore/cosign-installer action to v4.1.3
 - Update dependency apprise to v2.1.0
