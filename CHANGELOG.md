@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Update sigstore/cosign-installer action to v4.1.3
 - Update dependency apprise to v2.1.0
 - Update python docker tag to v3.15
 - Update dependency apprise to v2
