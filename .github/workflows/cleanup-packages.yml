@@ -26,16 +26,20 @@ jobs:
     steps:
       - name: Sanitise branch name for Docker tag
         id: branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          TAG=$(echo "${{ github.head_ref }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\{2,\}/-/g' | sed 's/^-//;s/-$//')
+          TAG=$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\{2,\}/-/g' | sed 's/^-//;s/-$//')
           echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: Find the package version for this PR's tag
         id: find
         uses: actions/github-script@v9
+        env:
+          TAG: ${{ steps.branch.outputs.tag }}
         with:
           script: |
-            const tag = '${{ steps.branch.outputs.tag }}';
+            const tag = process.env.TAG;
             const packageName = 'media-servarr-sync';
             const owner = context.repo.owner;
 
