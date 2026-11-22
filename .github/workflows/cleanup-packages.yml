@@ -34,7 +34,7 @@ jobs:
 
       - name: Find the package version for this PR's tag
         id: find
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TAG: ${{ steps.branch.outputs.tag }}
         with:
@@ -59,7 +59,7 @@ jobs:
 
       - name: Delete the PR's preview image
         if: steps.find.outputs.version_id != ''
-        uses: actions/delete-package-versions@v5
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
         with:
           package-name: media-servarr-sync
           package-type: container
