@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Retry a failed sync from the Sync tab** — every failed entry in the history now has a **↻ Retry** button, whether it covers a single episode or a whole batch. It scans the same folder again with the same episode, quality, profile and custom-format details, starts straight away instead of waiting out `WEBHOOK_DELAY` or the `SYNC_COOLDOWN` that a failure also sets, and shows up in the history marked `retry`; the original entry then reads `↻ retried` instead of offering the button again. The retry goes through the same path mapping as the original webhook, so history now also stores the path exactly as Sonarr/Radarr sent it: feeding the stored, already-mapped folder back through `PATH_REPLACEMENTS` could rewrite it a second time. Failures recorded before this version can still be retried from their folder, except with rclone enabled, where the original path is needed; queue those from *Trigger path scan*.
+
+---
+
 ## [v0.28.0] - 2026-11-22
 
 ### Added
@@ -11,8 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Update dependency apprise to v2.3.0
-
----
 
 ## [v0.27.1] - 2026-11-22
 
