@@ -45,6 +45,7 @@ from flask import Flask, request, jsonify, render_template, session, redirect, u
     has_request_context
 from flask.sessions import SecureCookieSessionInterface
 from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 from plexapi.server import PlexServer
 from plexapi.myplex import MyPlexAccount
@@ -327,6 +328,50 @@ _SESSION_COOKIE_SECURE_ALIASES = {"true": "always", "1": "always", "yes": "alway
                                   "false": "off", "0": "off", "no": "off"}
 
 
+# Werkzeug's own formats, e.g. "scrypt:32768:8:1$<salt>$<hex>". Matched strictly
+# so a plaintext password can't be mistaken for a hash.
+_PASSWORD_HASH_RE = re.compile(r'^(?:scrypt:\d+:\d+:\d+|pbkdf2:sha\d+:\d+)\$[^$]+\$[0-9a-f]+$')
+
+
+def is_password_hash(value) -> bool:
+    return bool(value) and bool(_PASSWORD_HASH_RE.match(value))
+
+
+def hash_admin_password(plain: str) -> str:
+    """Salted hash of the admin password, checked before it's handed back —
+    a stored hash that doesn't verify would lock the admin out."""
+    hashed = generate_password_hash(plain)
+    if not check_password_hash(hashed, plain):
+        raise RuntimeError("generated password hash did not verify")
+    return hashed
+
+
+def text_equal(a: str, b: str) -> bool:
+    """Constant-time string comparison that also accepts non-ASCII.
+
+    secrets.compare_digest raises TypeError on a str containing any non-ASCII
+    character, which turned logging in as 'josé' or with 'pässword' into an
+    HTTP 500. Comparing the UTF-8 bytes has no such limit."""
+    return _secrets.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def check_admin_password(candidate: str) -> bool:
+    """Verify a login attempt against MANUAL_PASS.
+
+    The stored value is normally a salted hash. A plaintext value is still
+    honoured, because MANUAL_PASS set in the environment is the operator's own
+    file and is never rewritten — and that path is also the way back in after
+    rolling back to a version that predates hashing."""
+    stored = MANUAL_PASS
+    if is_password_hash(stored):
+        try:
+            return check_password_hash(stored, candidate)
+        except Exception as exc:          # corrupt hash: refuse, never crash login
+            log.error("Stored admin password hash could not be checked: %s", exc)
+            return False
+    return text_equal(candidate, stored)
+
+
 def load_config():
     """(Re)load all env/DB-backed configuration into module globals. Called
     once at startup and again after a Settings page save so changes take
@@ -347,6 +392,16 @@ def load_config():
     HISTORY_DAYS    = safe_int(_cfg_raw("HISTORY_DAYS", "7"), 7, minimum=1)
     SYNC_COOLDOWN   = parse_duration(_cfg_raw("SYNC_COOLDOWN", "5m"))
     MANUAL_USER     = _cfg_raw("MANUAL_USER", "admin")
+    # settings.db used to keep the admin password in plaintext. Hash it in
+    # place the first time it's seen. A password set in the environment is
+    # the operator's own file and is left exactly as it is.
+    stored_pass = settings_store.get("MANUAL_PASS")
+    if stored_pass and not is_password_hash(stored_pass):
+        try:
+            settings_store.set("MANUAL_PASS", hash_admin_password(stored_pass))
+            log.info("Admin password in settings.db converted to a salted hash")
+        except Exception as exc:
+            log.error("Could not hash the stored admin password, leaving it as is: %s", exc)
     MANUAL_PASS     = _cfg_raw("MANUAL_PASS", "password")
     # Used to sign session cookies — set a long random string in your .env or Settings
     SECRET_KEY      = _cfg_raw("SECRET_KEY", "") or _RANDOM_SECRET_KEY
@@ -2302,9 +2357,9 @@ def onboarding():
     if request.method == 'POST':
         step = request.form.get('step', '')
         if step == 'password':
-            new_pass = request.form.get('new_password', '').strip()
-            if not _cfg_is_env('MANUAL_PASS') and new_pass:
-                settings_store.set('MANUAL_PASS', new_pass)
+            new_pass = request.form.get('new_password', '')
+            if not _cfg_is_env('MANUAL_PASS') and new_pass.strip():
+                settings_store.set('MANUAL_PASS', hash_admin_password(new_pass))
                 load_config()
             return redirect(url_for('onboarding'))
         elif step == 'plex_manual':
@@ -2325,7 +2380,7 @@ def onboarding():
     return render_template(
         'onboarding.html', message=message, msg_class=msg_class,
         manual_pass_locked=_cfg_is_env('MANUAL_PASS'),
-        using_default_pass=(MANUAL_PASS == "password"),
+        using_default_pass=check_admin_password("password"),
     )
 
 
@@ -2339,8 +2394,8 @@ def login():
         password = request.form.get('password', '')
         # Constant-time comparison so response timing can't be used to probe
         # the configured username/password character by character.
-        user_ok = _secrets.compare_digest(username, MANUAL_USER)
-        pass_ok = _secrets.compare_digest(password, MANUAL_PASS)
+        user_ok = text_equal(username, MANUAL_USER)
+        pass_ok = check_admin_password(password)
         if user_ok and pass_ok:
             session.permanent = bool(request.form.get('remember_me'))
             session['authenticated'] = True
@@ -3045,7 +3100,8 @@ SETTINGS_SPEC = [
      '{ "/mnt/media/tv": "1" }'),
 
     ("MANUAL_USER", "MANUAL_USER", "Username", "text", "Manual UI Login", "admin"),
-    ("MANUAL_PASS", "MANUAL_PASS", "Password", "password", "Manual UI Login", ""),
+    ("MANUAL_PASS", "MANUAL_PASS", "Password", "admin_password", "Manual UI Login",
+     "Leave blank to keep the current password"),
     ("SECRET_KEY", "SECRET_KEY", "Session Secret Key", "password", "Manual UI Login", ""),
     ("SESSION_COOKIE_SECURE", "SESSION_COOKIE_SECURE", "Secure Session Cookie", "choice",
      "Manual UI Login", ""),
@@ -3089,6 +3145,15 @@ def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
     """
     if kind == "bool":
         return ("true" if raw else "false"), None
+
+    if kind == "admin_password":
+        # Blank keeps the current password. The field is never pre-filled, so
+        # without this every save would replace the password with "".
+        # Not stripped: login compares exactly what was typed, so trimming
+        # here would store a password the admin can't type.
+        if not (raw or "").strip():
+            return None, None
+        return hash_admin_password(raw), None
 
     raw = (raw or "").strip()
 
@@ -3150,6 +3215,8 @@ def _settings_view_model() -> list:
     groups = {}
     for env_name, global_name, label, kind, group, placeholder in SETTINGS_SPEC:
         value = globals().get(global_name, "")
+        if kind == "admin_password":
+            value = ""        # never send the password, or its hash, to the browser
         if kind == "json" and isinstance(value, dict):
             value = json.dumps(value, indent=2)
         groups.setdefault(group, []).append({
@@ -3184,7 +3251,7 @@ def settings_page():
                                            request.form.get(env_name, ""))
             if err:
                 errors.append(err)
-            else:
+            elif value is not None:          # None: leave this setting untouched
                 pending[env_name] = value
 
         if errors:

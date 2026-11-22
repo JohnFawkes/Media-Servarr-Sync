@@ -278,6 +278,10 @@
                     placeholder="{{ f.placeholder }}"
                     {% if f.kind == 'urls' %}rows="3" spellcheck="false"{% endif %}
                     {% if f.from_env %}disabled{% endif %}>{{ f.value }}</textarea>
+          {% elif f.kind == 'admin_password' %}
+          <input type="password" id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
+                 value="" placeholder="{{ f.placeholder }}" autocomplete="new-password"
+                 {% if f.from_env %}disabled{% endif %}>
           {% else %}
           <input type="{{ 'password' if f.kind == 'password' else 'text' }}"
                  id="fld-{{ f.env_name }}" name="{{ f.env_name }}"
