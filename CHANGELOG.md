@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- Update dependency apprise to v2.3.0
+
+---
+
 ## [v0.27.1] - 2026-11-22
 
 ### Fixed
