@@ -322,6 +322,11 @@ NOTIFY_ON_CHOICES = ("error", "all", "off")
 # sync gets old fast, so failures-only is the default.
 NOTIFY_MENTION_ON_CHOICES = ("error", "all")
 
+# How notifiarr:// targets are sent: through Apprise, or straight to
+# Notifiarr's API by send_via_notifiarr(). Apprise fixes the 👉 in front of a
+# mention and repeats the mention inside the embed; direct delivery doesn't.
+NOTIFIARR_DELIVERY_CHOICES = ("apprise", "direct")
+
 # When the session cookie carries the Secure attribute. See _SessionInterface.
 SESSION_COOKIE_SECURE_CHOICES = ("auto", "always", "off")
 _SESSION_COOKIE_SECURE_ALIASES = {"true": "always", "1": "always", "yes": "always", "on": "always",
@@ -382,7 +387,8 @@ def load_config():
         ONBOARD_WIKI_URL, ONBOARD_REQUEST_URL, USE_RCLONE, RCLONE_RC_URL, \
         RCLONE_RC_USER, RCLONE_RC_PASS, RCLONE_MOUNT_ROOT, PLEX_IDENTIFIER, \
         PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING, \
-        NOTIFY_URLS, NOTIFY_ON, NOTIFY_MENTION, NOTIFY_MENTION_ON, SESSION_COOKIE_SECURE
+        NOTIFY_URLS, NOTIFY_ON, NOTIFY_MENTION, NOTIFY_MENTION_ON, SESSION_COOKIE_SECURE, \
+        NOTIFIARR_DELIVERY, NOTIFIARR_MENTION_EMOJI
 
     PLEX_URL        = _cfg_raw("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
     PLEX_TOKEN      = _cfg_raw("PLEX_TOKEN", "")
@@ -434,6 +440,15 @@ def load_config():
         log.warning("Unknown NOTIFY_MENTION_ON value %r — falling back to 'error'",
                     NOTIFY_MENTION_ON)
         NOTIFY_MENTION_ON = "error"
+
+    # Notifiarr: 'apprise' (default) or 'direct'. The emoji goes in front of
+    # the mention, and only direct delivery can use it — Apprise fixes its own.
+    NOTIFIARR_DELIVERY = _cfg_raw("NOTIFIARR_DELIVERY", "apprise").strip().lower()
+    if NOTIFIARR_DELIVERY not in NOTIFIARR_DELIVERY_CHOICES:
+        log.warning("Unknown NOTIFIARR_DELIVERY value %r — falling back to 'apprise'",
+                    NOTIFIARR_DELIVERY)
+        NOTIFIARR_DELIVERY = "apprise"
+    NOTIFIARR_MENTION_EMOJI = _cfg_raw("NOTIFIARR_MENTION_EMOJI", "").strip()
 
     # Rclone — set USE_RCLONE=false to skip all rclone calls entirely
     USE_RCLONE        = _cfg_raw("USE_RCLONE", "false").strip().lower() in ("1", "true", "yes")
@@ -1384,6 +1399,9 @@ def notify_url_supported(url: str) -> bool:
     """
     if _apprise_accepts(url):
         return True
+    if url.lower().startswith("notifiarr://"):
+        key, channels, _source, _event = parse_notifiarr_url(url)
+        return bool(key and channels)
     return url.lower().startswith(("http://", "https://"))
 
 
@@ -1450,6 +1468,110 @@ def _send_via_http(entry: dict, url: str, title: str, body: str) -> tuple:
     return True, provider
 
 
+# Notifiarr's endpoint for Apprise-style messages — the one Apprise itself
+# posts to, so a key that works through Apprise works here unchanged.
+_NOTIFIARR_API_URL = "https://notifiarr.com/api/v1/notification/apprise"
+_NOTIFIARR_CHANNEL_SPLIT_RE = re.compile(r"[ \t\r\n,#\\/]+")
+_DISCORD_MENTION_ID_RE = re.compile(r"<@(&?)(\d+)>")
+
+
+def parse_notifiarr_url(url: str) -> tuple:
+    """Read a notifiarr:// URL into (api_key, channels, source, event).
+
+    Accepts everything Apprise does, so one URL works with either delivery
+    setting:  notifiarr://KEY/#CHANNEL[/#CHANNEL…][?source=…&event=…&to=…]
+    ?apikey= or ?key= may carry the key instead, making the host a channel.
+    """
+    rest = url.split("://", 1)[1] if "://" in url else ""
+    rest, _, query = rest.partition("?")
+    qs = urllib.parse.parse_qs(query)
+    host, _, path = rest.partition("/")
+    parts = [p for p in _NOTIFIARR_CHANNEL_SPLIT_RE.split(urllib.parse.unquote(path)) if p]
+    key = (qs.get("apikey") or qs.get("key") or [""])[0]
+    if key:
+        parts.insert(0, host)
+    else:
+        key = urllib.parse.unquote(host)
+    for to in qs.get("to", []):
+        parts += [p for p in _NOTIFIARR_CHANNEL_SPLIT_RE.split(to) if p]
+    channels = []
+    for p in parts:
+        if p.isascii() and p.isdigit() and int(p) not in channels:
+            channels.append(int(p))
+    source = (qs.get("source") or qs.get("from") or [""])[0]
+    event = safe_int((qs.get("event") or ["0"])[0], 0, minimum=0)
+    return key, channels, source, event
+
+
+def send_via_notifiarr(entry: dict, url: str, title: str, body: str,
+                       mention: str) -> tuple:
+    """POST straight to Notifiarr instead of through Apprise. Returns (ok, detail).
+
+    The payload is the one Apprise builds, with two differences: the line
+    above the embed starts with NOTIFIARR_MENTION_EMOJI rather than a fixed 👉,
+    and the mention isn't repeated in the embed's description. Notifiarr's bot
+    pings from `ping`, which holds one user and one role, so the first of each
+    in `mention` is used.
+    """
+    key, channels, source, event = parse_notifiarr_url(url)
+    if not key:
+        return False, "no Notifiarr API key in the URL"
+    if not channels:
+        return False, "no Notifiarr channel in the URL"
+
+    ping = {"pingUser": 0, "pingRole": 0}
+    for is_role, ident in _DISCORD_MENTION_ID_RE.findall(mention):
+        slot = "pingRole" if is_role else "pingUser"
+        if not ping[slot]:
+            ping[slot] = ident        # a string, as Apprise sends it
+    content = f"{NOTIFIARR_MENTION_EMOJI} {mention}".strip() if mention else ""
+    failed = entry.get("status") == "error"
+    headers = {
+        "User-Agent": "Media-Servarr-Sync",
+        "Content-Type": "application/json",
+        "Accept": "text/plain",
+        "X-api-Key": key,
+    }
+
+    errors = []
+    for channel in channels:
+        payload = {
+            "source": source or "Media Servarr Sync",
+            "type": "failure" if failed else "success",
+            "notification": {
+                "update": bool(event),
+                "name": "Media Servarr Sync",
+                "event": str(event) if event else "",
+            },
+            "discord": {
+                "color": "#A32037" if failed else "#3AA337",
+                "ping": ping,
+                "text": {
+                    "title": title,
+                    "content": content,
+                    "description": body,
+                    "footer": "Media Servarr Sync",
+                },
+                "ids": {"channel": channel},
+            },
+        }
+        try:
+            res = requests.post(_NOTIFIARR_API_URL, data=json.dumps(payload),
+                                headers=headers, timeout=_NOTIFY_TIMEOUT)
+        except requests.RequestException as exc:
+            log.warning("[NOTIFY] notifiarr request for %s failed: %s",
+                        redact_notify_url(url), exc)
+            errors.append("could not reach Notifiarr")
+            continue
+        if not res.ok:
+            log.warning("[NOTIFY] notifiarr returned HTTP %d for %s: %s",
+                        res.status_code, redact_notify_url(url), res.text[:200])
+            errors.append(f"notifiarr returned HTTP {res.status_code}")
+    if errors:
+        return False, "; ".join(dict.fromkeys(errors))
+    return True, "notifiarr"
+
+
 def send_notification(entry: dict, urls: str = "") -> tuple:
     """Deliver one notification to every configured target.
 
@@ -1469,12 +1591,17 @@ def send_notification(entry: dict, urls: str = "") -> tuple:
         # Each service spells mentions differently, so render per target and
         # put it on its own first line. On Discord this lands in the payload's
         # top-level `content`, which is what actually triggers a ping.
-        mention = notify_mention_for(entry, notify_target_provider(target))
+        provider = notify_target_provider(target)
+        mention = notify_mention_for(entry, provider)
         target_body = f"{mention}\n{body}" if mention else body
 
-        handled, ok, detail = _send_via_apprise(entry, target, title, target_body)
-        if not handled:
-            ok, detail = _send_via_http(entry, target, title, target_body)
+        if provider == "notifiarr" and (NOTIFIARR_DELIVERY == "direct" or apprise is None):
+            # Also the only way to reach Notifiarr when Apprise isn't installed.
+            ok, detail = send_via_notifiarr(entry, target, title, body, mention)
+        else:
+            handled, ok, detail = _send_via_apprise(entry, target, title, target_body)
+            if not handled:
+                ok, detail = _send_via_http(entry, target, title, target_body)
         if ok:
             sent.append(redact_notify_url(target))
         else:
@@ -3129,6 +3256,9 @@ SETTINGS_SPEC = [
     ("NOTIFY_MENTION", "NOTIFY_MENTION", "Mention / Tag", "mentions", "Notifications",
      "@everyone  ·  user:123456789012345678  ·  role:987654321098765432"),
     ("NOTIFY_MENTION_ON", "NOTIFY_MENTION_ON", "Mention On", "choice", "Notifications", ""),
+    ("NOTIFIARR_DELIVERY", "NOTIFIARR_DELIVERY", "Notifiarr Delivery", "choice", "Notifications", ""),
+    ("NOTIFIARR_MENTION_EMOJI", "NOTIFIARR_MENTION_EMOJI", "Notifiarr Mention Emoji", "text",
+     "Notifications", "e.g. 🔔 — blank for none (Direct delivery only)"),
 ]
 
 # Allowed values for "choice" fields, keyed by env name.
@@ -3141,6 +3271,10 @@ SETTINGS_CHOICES = {
     "NOTIFY_MENTION_ON": [
         ("error", "Failures only"),
         ("all",   "Every notification"),
+    ],
+    "NOTIFIARR_DELIVERY": [
+        ("apprise", "Through Apprise — tag after a fixed 👉, repeated in the message"),
+        ("direct",  "Direct to Notifiarr — your own emoji, tag shown once"),
     ],
     "NOTIFY_ON": [
         ("error", "Failures only"),
