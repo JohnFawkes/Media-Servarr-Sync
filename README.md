@@ -121,6 +121,8 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `NOTIFY_ON` | | `error` | Which results to send: `error` (failures only), `all` (every sync), or `off` |
 | `NOTIFY_MENTION` | | — | Who to tag in the notification, e.g. `@everyone` or `user:123456789`. See [Tagging someone](#tagging-someone) |
 | `NOTIFY_MENTION_ON` | | `error` | When to attach the tag: `error` (failures only) or `all` |
+| `NOTIFIARR_DELIVERY` | | `apprise` | How `notifiarr://` targets are sent: `apprise` or `direct`. See [Notifiarr](#notifiarr) |
+| `NOTIFIARR_MENTION_EMOJI` | | — | What goes in front of the tag with `direct` delivery, e.g. `🔔`. Blank for nothing |
 | `MEDIA_ROOT` | | `/mnt/media` | Host path to your media root, mounted into the container (only needed if `MINIMUM_AGE > 0`) |
 | `CONTAINER_MEDIA` | | `/mnt/media` | Path **inside this container** where `MEDIA_ROOT` is mounted — must match the path Plex uses to see your files |
 
@@ -229,6 +231,24 @@ written in Discord syntax. Its API pings at most one user and one role per
 message: the first `user:` and the first `role:` you list. It has no ping for
 `@everyone` or `@here`; those appear in the message as text only, so tag a role
 instead.
+
+##### Notifiarr
+
+`NOTIFIARR_DELIVERY` picks how `notifiarr://` targets are sent. Both use the
+same URL and API key, and both ping the same way:
+
+| | `apprise` (default) | `direct` |
+|---|---|---|
+| Sent by | Apprise's Notifiarr plugin | the app, straight to Notifiarr's API |
+| Line above the message | `👉` + the tag, fixed by Apprise | `NOTIFIARR_MENTION_EMOJI` + the tag |
+| Tag inside the message | repeated | shown once, above it |
+| Message header | `Apprise` | `Media Servarr Sync`, or `?source=` |
+
+`NOTIFIARR_MENTION_EMOJI` can be any emoji or short text, such as `🔔` or
+`[ALERT]`; leave it blank for just the tag. It only appears when the message
+carries a tag. Apprise has no option to change its `👉`, so the emoji only
+works with `direct`. Notifiarr targets are always sent directly when Apprise
+isn't installed.
 
 Anything already written in a service's own markup (`<@123>`, `<!here>`,
 `<!subteam^S1>`) is passed through to Discord and Slack untouched. Raw ids are
