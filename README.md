@@ -114,7 +114,7 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `RADARR_URL` | no | — | Radarr base URL, e.g. `http://radarr:7878`. Enables quality profile and custom format lookups for Radarr sync history entries |
 | `RADARR_API_KEY` | no | — | Radarr API key (Settings → General → Security). Required alongside `RADARR_URL` |
 | `MANUAL_USER` | | `admin` | Username for the manual trigger UI |
-| `MANUAL_PASS` | | `changeme` | Password for the manual trigger UI |
+| `MANUAL_PASS` | | `password` | Password for the manual trigger UI. Usually best left unset and chosen during first-run setup, where it's stored hashed. See [Admin password](#admin-password) |
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `NOTIFY_URLS` | | — | One or more notification targets (comma- or newline-separated). Any [Apprise](https://github.com/caronc/apprise/wiki) URL, or a plain webhook. See [Notifications](#notifications) |
 | `NOTIFY_ON` | | `error` | Which results to send: `error` (failures only), `all` (every sync), or `off` |
@@ -250,6 +250,33 @@ Bare Gotify `/message?token=…` URLs are also handled directly. Apprise is an
 optional dependency: if it isn't installed, plain webhooks plus raw
 Discord/Slack/Gotify/ntfy URLs still work, and other schemes are reported as
 unsupported.
+
+### Admin password
+
+The web UI password can come from one of two places:
+
+- **First-run setup or the Settings page** — stored in `/data/settings.db` as a
+  salted scrypt hash, never as the password itself. The Settings field is always
+  shown empty: leave it empty to keep the current password, or type a new one to
+  replace it. A password saved by an earlier version, which kept it in plain
+  text, is converted to a hash automatically the first time this version starts.
+- **`MANUAL_PASS` in `.env`** — used exactly as written and never rewritten,
+  since it's your file. It overrides anything saved in the UI and locks the
+  Settings field. To keep the password itself out of `.env` as well, set
+  `MANUAL_PASS` to a hash instead:
+
+  ```bash
+  docker compose exec media-servarr-sync python -c "import getpass; from werkzeug.security import generate_password_hash as h; print(h(getpass.getpass()))"
+  ```
+
+  The hash contains `$` characters, which Docker Compose would otherwise read
+  as variables, so wrap it in **single quotes** in `.env`:
+  `MANUAL_PASS='scrypt:32768:8:1$…$…'`. If you set it under `environment:` in
+  `compose.yaml` instead, write every `$` as `$$`.
+
+**Rolling back:** a version older than this one can't read the hash, so after
+downgrading, the saved password is refused. Set `MANUAL_PASS` in `.env` and
+restart to get back in.
 
 ### Duration format
 
