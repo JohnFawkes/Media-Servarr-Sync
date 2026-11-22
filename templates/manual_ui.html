@@ -244,6 +244,17 @@
   .h-meta    { color: var(--muted); text-align: right; white-space: nowrap; }
   .h-label   { color: var(--accent); font-size: 10px; }
   .h-error   { color: var(--error); font-size: 10px; margin-top: 2px; }
+  .retry-btn {
+    display: inline-block; margin-top: 6px; padding: 2px 8px;
+    background: transparent; color: var(--error);
+    border: 1px solid var(--error); border-radius: var(--radius);
+    font: inherit; font-size: 10px; letter-spacing: 0.04em; cursor: pointer;
+  }
+  .retry-btn:hover:not(:disabled) { background: rgba(248,113,113,0.12); }
+  .retry-btn:disabled { cursor: default; opacity: 0.7; }
+  .retry-btn.retry-done { color: var(--muted); border-color: var(--border); }
+  .retry-state { display: inline-block; margin-top: 6px; font-size: 10px; color: var(--muted); }
+  .retry-msg { display: block; margin: 3px 0 0 auto; max-width: 220px; font-size: 10px; color: var(--error); white-space: normal; text-align: right; }
   .h-ts     { display: block; }
 
   .empty    { color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-align: center; padding: 16px 0; }
@@ -1092,12 +1103,22 @@
             </div>
             {% endif %}
           {% endif %}
-          <div class="h-label">{{ h.label }} &nbsp;·&nbsp; {{ h.duration_s }}s</div>
+          <div class="h-label">{{ h.label }}{% if h.retry_of %} &nbsp;·&nbsp; retry{% endif %} &nbsp;·&nbsp; {{ h.duration_s }}s</div>
           {% if h.error %}<div class="h-error">{{ h.error }}</div>{% endif %}
         </div>
         <div class="h-meta">
           <span class="h-ts">{{ h.ts[11:19] }}</span>
           <span>{{ h.ts[:10] }}</span>
+          {% if h.status == 'error' %}
+            {% if h.retried %}
+            <span class="h-ts retry-state" title="This sync was retried — the result is further up the history">↻ retried</span>
+            {% elif h.retrying %}
+            <span class="h-ts retry-state">↻ retry queued</span>
+            {% else %}
+            <span class="h-ts"><button type="button" class="retry-btn" data-retry-id="{{ h.id }}"
+                    title="Scan this folder again with the same episode details">↻ Retry</button></span>
+            {% endif %}
+          {% endif %}
         </div>
       </div>
       {% endfor %}
@@ -1220,6 +1241,46 @@
 </script>
 <script id="page-init">
 (function() {
+  /* Retry a failed sync. Delegated from document, so it survives the
+     auto-refresh replacing #history-body and PJAX swapping the page; bound
+     once per document because page-init runs again on every visit. */
+  if (!window.__retryBound) {
+    window.__retryBound = true;
+    document.addEventListener('click', async function(e) {
+      var b = e.target.closest('.retry-btn');
+      if (!b || b.disabled) return;
+      var cell = b.parentNode;
+      var old = cell.querySelector('.retry-msg');
+      if (old) old.remove();
+      function fail(text) {
+        b.disabled = false; b.textContent = '\u21bb Retry';
+        var m = document.createElement('span');
+        m.className = 'retry-msg'; m.textContent = text;
+        cell.appendChild(m);
+      }
+      b.disabled = true; b.textContent = '\u21bb \u2026';
+      var tok = document.querySelector('input[name="csrf_token"]');
+      try {
+        var r = await fetch('/api/history/' + encodeURIComponent(b.dataset.retryId) + '/retry', {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'X-CSRFToken': tok ? tok.value : ''}
+        });
+        var ct = r.headers.get('content-type') || '';
+        if (r.redirected || ct.indexOf('application/json') === -1) {
+          fail('Session expired \u2014 reload the page'); return;
+        }
+        var data = await r.json();
+        if (!r.ok) { fail(data.message || 'Retry failed'); return; }
+        b.classList.add('retry-done');
+        b.textContent = data.status === 'deduplicated' ? '\u21bb already queued'
+                      : data.status === 'demo' ? '\u21bb demo' : '\u21bb retry queued';
+        b.title = data.message || '';
+      } catch (err) {
+        fail('Could not reach the server');
+      }
+    });
+  }
+
   var tick = null, npTick = null, statsTick = null, activeMaps = {}, npRendered = false;
   var statsHistory = { cpu_sys: [], cpu_plex: [], ram_sys: [], ram_plex: [], lan: [], wan: [] };
   var STATS_BUF = 20;

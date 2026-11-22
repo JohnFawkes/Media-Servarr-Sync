@@ -655,6 +655,7 @@ class SyncTask:
     quality: str = ""
     custom_formats: str = ""   # JSON-encoded list of format name strings
     quality_profile: str = ""  # e.g. "HD-1080p" from Sonarr/Radarr quality profiles
+    retry_of: int = 0          # history id of the failed sync this retries, else 0
     queued_at: float = field(default_factory=time.monotonic)
 
     def __eq__(self, other):
@@ -700,6 +701,13 @@ class SyncHistory:
                 conn.execute("ALTER TABLE sync_history ADD COLUMN custom_formats TEXT DEFAULT ''")
             if 'quality_profile' not in existing:
                 conn.execute("ALTER TABLE sync_history ADD COLUMN quality_profile TEXT DEFAULT ''")
+            # The path as Sonarr/Radarr sent it, before PATH_REPLACEMENTS. A
+            # retry needs it: `path` is already mapped, and mapping it a second
+            # time can rewrite it again (e.g. /data -> /data/media).
+            if 'raw_path' not in existing:
+                conn.execute("ALTER TABLE sync_history ADD COLUMN raw_path TEXT DEFAULT ''")
+            if 'retry_of' not in existing:
+                conn.execute("ALTER TABLE sync_history ADD COLUMN retry_of INTEGER DEFAULT 0")
             conn.commit()
 
     def set_retention(self, retention_days: int):
@@ -714,8 +722,9 @@ class SyncHistory:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("""
                     INSERT INTO sync_history
-                        (ts, label, path, status, error, duration_s, created_at, episode, quality, custom_formats, quality_profile)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (ts, label, path, status, error, duration_s, created_at, episode, quality,
+                         custom_formats, quality_profile, raw_path, retry_of)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     entry['ts'],
                     entry['label'],
@@ -728,6 +737,8 @@ class SyncHistory:
                     entry.get('quality', ''),
                     entry.get('custom_formats', ''),
                     entry.get('quality_profile', ''),
+                    entry.get('raw_path', ''),
+                    entry.get('retry_of', 0) or 0,
                 ))
                 # Prune old entries
                 conn.execute("DELETE FROM sync_history WHERE created_at < ?", (cutoff,))
@@ -753,8 +764,12 @@ class SyncHistory:
                 if profile_filter:
                     conditions.append("quality_profile = ?")
                     params.append(profile_filter)
+                # `retried`: a later row records a retry of this one, so the
+                # Sync tab shows that instead of offering another retry.
                 query = (
-                    "SELECT ts, label, path, status, error, duration_s, episode, quality, custom_formats, quality_profile"
+                    "SELECT id, ts, label, path, status, error, duration_s, episode, quality,"
+                    " custom_formats, quality_profile, raw_path, retry_of,"
+                    " EXISTS(SELECT 1 FROM sync_history r WHERE r.retry_of = sync_history.id) AS retried"
                     " FROM sync_history"
                 )
                 if conditions:
@@ -763,6 +778,18 @@ class SyncHistory:
                 params.extend([limit, offset])
                 cursor = conn.execute(query, params)
                 return [dict(row) for row in cursor.fetchall()]
+
+    def get(self, entry_id: int):
+        """One entry by id, or None."""
+        with self._lock:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT id, ts, label, path, status, error, episode, quality,"
+                    " custom_formats, quality_profile, raw_path, retry_of,"
+                    " EXISTS(SELECT 1 FROM sync_history r WHERE r.retry_of = sync_history.id) AS retried"
+                    " FROM sync_history WHERE id = ?", (entry_id,)).fetchone()
+                return dict(row) if row else None
 
     def count(self, search: str = "", status_filter: str = "",
               quality_filter: str = "", profile_filter: str = "") -> int:
@@ -1734,6 +1761,8 @@ def sync_worker():
                 "quality": task.quality,
                 "custom_formats": task.custom_formats,
                 "quality_profile": task.quality_profile,
+                "raw_path": task.raw_path,
+                "retry_of": task.retry_of,
             }
             history.add(entry)
             notify_sync_result(entry)
@@ -2016,14 +2045,27 @@ def _flush_cooldown_pending(mapped_folder: str):
 
 
 def enqueue_sync(raw_path: str, label: str, episode: str = "",
-                 quality: str = "", custom_formats: str = "", quality_profile: str = ""):
-    """Validate, map, and enqueue a sync task. Returns (response_dict, http_status)."""
+                 quality: str = "", custom_formats: str = "", quality_profile: str = "",
+                 retry_of: int = 0, premapped: bool = False):
+    """Validate, map, and enqueue a sync task. Returns (response_dict, http_status).
+
+    retry_of: history id of a failed sync being retried from the UI. A retry is
+    a deliberate click on something already on disk, so it skips the cooldown
+    and WEBHOOK_DELAY that exist to absorb Sonarr/Radarr's webhook bursts.
+    premapped: raw_path is a history row's already-mapped folder (a row from
+    before raw paths were recorded); used as-is, never mapped a second time.
+    """
     if not raw_path:
         return {"status": "skipped", "reason": "empty path"}, 200
 
-    mapped_folder  = apply_path_mapping(raw_path, PATH_REPLACEMENTS, label, is_dir=True)
-    rclone_path    = apply_path_mapping(raw_path, RCLONE_PATH_REPLACEMENTS, label, is_dir=False) \
-                     if USE_RCLONE else ""
+    if premapped:
+        mapped_folder = raw_path
+        rclone_path   = ""          # unknowable without the original path
+        raw_path      = ""          # so a retry of this retry stays premapped
+    else:
+        mapped_folder = apply_path_mapping(raw_path, PATH_REPLACEMENTS, label, is_dir=True)
+        rclone_path   = apply_path_mapping(raw_path, RCLONE_PATH_REPLACEMENTS, label, is_dir=False) \
+                        if USE_RCLONE else ""
     age_check_path = mapped_folder
 
     # Section mapping
@@ -2049,7 +2091,10 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
         quality=quality,
         custom_formats=custom_formats,
         quality_profile=quality_profile,
+        retry_of=retry_of,
     )
+    if retry_of:
+        task.queued_at = time.monotonic() - WEBHOOK_DELAY
 
     # Deduplication: if same folder already queued or in cooldown, skip re-queuing
     with _in_flight_lock:
@@ -2074,7 +2119,7 @@ def enqueue_sync(raw_path: str, label: str, episode: str = "",
                     existing_task.custom_formats, custom_formats)
             return {"status": "deduplicated"}, 200
 
-        if SYNC_COOLDOWN > 0:
+        if SYNC_COOLDOWN > 0 and not retry_of:
             _prune_cooldown()
             expiry = _cooldown.get(mapped_folder, 0)
             if time.monotonic() < expiry:
@@ -2441,7 +2486,8 @@ def _demo_history() -> list:
             "quality": "WEB-DL-1080p", "custom_formats": '[]', "quality_profile": "",
         },
     ]
-    for item in raw:
+    for n, item in enumerate(raw, 1):
+        item['id'] = n
         display, ep_list, ep_rich = _parse_episode_field(item.get('episode', ''))
         item['episode_display'] = display
         item['episode_list'] = ep_list
@@ -2728,7 +2774,10 @@ def manual_webhook():
                                     quality_filter=quality_filter, profile_filter=profile_filter)
         total_pages = (total_count + per_page - 1) // per_page
 
+    with _in_flight_lock:
+        retrying = {t.retry_of for t in _in_flight.values() if t.retry_of}
     for item in recent:
+        item['retrying'] = item.get('id') in retrying
         display, ep_list, ep_rich = _parse_episode_field(item.get('episode', ''))
         item['episode_display'] = display
         item['episode_list'] = ep_list
@@ -2771,6 +2820,52 @@ def manual_webhook():
         plex_url=PLEX_URL,
         demo=session.get('demo', False),
     )
+
+
+@app.route('/api/history/<int:entry_id>/retry', methods=['POST'])
+@requires_auth
+def api_retry_sync(entry_id):
+    """Queue a failed sync again, with the same path and episode details.
+
+    CSRF-protected like a form post: the Sync tab sends the token in an
+    X-CSRFToken header.
+    """
+    if session.get('demo'):
+        return jsonify({"status": "demo", "message": "Retry is disabled in demo mode"}), 200
+    entry = history.get(entry_id)
+    if not entry:
+        return jsonify({"status": "error",
+                        "message": "That sync is no longer in the history"}), 404
+    if entry["status"] != "error":
+        return jsonify({"status": "error", "message": "Only failed syncs can be retried"}), 400
+    if entry["retried"]:
+        # The button is gone once a retry is recorded; a stale page can still send it.
+        return jsonify({"status": "error",
+                        "message": "Already retried — the result is further up the history"}), 409
+
+    raw_path = entry.get("raw_path") or ""
+    if not raw_path and USE_RCLONE:
+        # Older rows only kept the mapped folder, and the rclone path can only
+        # be derived from the original one.
+        return jsonify({"status": "error",
+                        "message": "This failure was recorded before retries were possible, and rclone "
+                                   "needs its original path — queue it from Trigger path scan instead"}), 409
+
+    result, _ = enqueue_sync(raw_path or entry["path"], entry["label"],
+                             episode=entry.get("episode") or "",
+                             quality=entry.get("quality") or "",
+                             custom_formats=entry.get("custom_formats") or "",
+                             quality_profile=entry.get("quality_profile") or "",
+                             retry_of=entry_id, premapped=not raw_path)
+    status = result.get("status")
+    if status == "queued":
+        log.info("[%s] [RETRY] Queued retry of failed sync #%d: %s",
+                 entry["label"], entry_id, entry["path"])
+        return jsonify({"status": status, "message": "Retry queued"}), 200
+    if status == "deduplicated":
+        return jsonify({"status": status, "message": "This folder is already queued"}), 200
+    return jsonify({"status": status or "error",
+                    "message": f"Can't retry: {result.get('reason', 'unknown error')}"}), 409
 
 
 @app.route('/api/server-stats', methods=['GET'])
