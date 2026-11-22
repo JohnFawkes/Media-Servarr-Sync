@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [v0.28.0] - 2026-11-22
 
 ### Added
 - **Choose how Notifiarr is sent, and the emoji in front of the tag** — Apprise puts a fixed 👉 in front of every Notifiarr tag and also repeats the tag inside the message, with no option to change either. A new `NOTIFIARR_DELIVERY` setting keeps that as the default (`apprise`), or sends `notifiarr://` targets straight to Notifiarr's API (`direct`). Direct delivery uses `NOTIFIARR_MENTION_EMOJI` in front of the tag instead (any emoji or short text, or nothing), shows the tag only once, and labels the message `Media Servarr Sync` instead of `Apprise`. Both modes take the same URL and API key and ping the same way. Notifiarr targets now also work when Apprise isn't installed, where they used to be rejected as unsupported.
