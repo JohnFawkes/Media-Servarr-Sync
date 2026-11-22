@@ -223,6 +223,13 @@ notify Discord and Slack at once:
 | `role:<id>` | `<@&id>` | `<!subteam^id>` | *omitted* |
 | `@someone` | `@someone` | `@someone` | `@someone` |
 
+**Notifiarr** (`notifiarr://apikey/#channel`) gets the Discord column, because
+Notifiarr posts to Discord through its own bot and pings whoever it finds
+written in Discord syntax. Its API pings at most one user and one role per
+message: the first `user:` and the first `role:` you list. It has no ping for
+`@everyone` or `@here`; those appear in the message as text only, so tag a role
+instead.
+
 Anything already written in a service's own markup (`<@123>`, `<!here>`,
 `<!subteam^S1>`) is passed through to Discord and Slack untouched. Raw ids are
 dropped for services that have no mention syntax — a bare `<@123>` in an ntfy

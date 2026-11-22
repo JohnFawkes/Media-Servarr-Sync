@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Tags never pinged anyone through Notifiarr** — `NOTIFY_MENTION` treated a `notifiarr://` target as a service with no mention support, so `user:` and `role:` tags were dropped before the message was sent, and even a mention written as `<@id>` was stripped. Notifiarr posts to Discord through its own bot, and it only pings the user and role it finds written in Discord syntax, so the notification arrived but notified nobody. Notifiarr targets now get Discord syntax. Notifiarr pings at most one user and one role per message (the first of each you list); it has no ping for `@everyone` or `@here`, which appear in the message as text only. The Save & Send Test button was never the problem: a test always carries the tag.
+
+---
+
 ## [v0.27.0] - 2026-11-22
 
 ### Added
@@ -27,8 +34,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Update dependency apprise to v2
 - Update dependency python-dotenv to v1.2.4
 - Update dependency plexapi to v4.18.3
-
----
 
 ## [v0.26.0] - 2026-09-10
 
