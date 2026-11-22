@@ -41,7 +41,9 @@ try:
 except ImportError:                       # pragma: no cover - optional dependency
     apprise = None
 
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response, send_file
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response, send_file, \
+    has_request_context
+from flask.sessions import SecureCookieSessionInterface
 from flask_wtf.csrf import CSRFProtect
 from dotenv import load_dotenv
 from plexapi.server import PlexServer
@@ -97,6 +99,41 @@ logging.getLogger('apprise').setLevel(logging.CRITICAL)
 
 app = Flask(__name__)
 csrf = CSRFProtect(app)
+
+
+def request_is_https() -> bool:
+    """True when the browser reached us over HTTPS — directly, or through a
+    reverse proxy that says so in X-Forwarded-Proto.
+
+    The header is client-controllable when nothing sits in front of the app,
+    but the only thing it decides is the Secure flag on that same client's
+    own cookie, so a spoofed value can hurt nobody but the sender.
+    """
+    if request.is_secure:
+        return True
+    forwarded = request.headers.get("X-Forwarded-Proto", "")
+    # Proxies append; the leftmost entry is the hop the browser itself used.
+    return forwarded.split(",")[0].strip().lower() == "https"
+
+
+class _SessionInterface(SecureCookieSessionInterface):
+    """Decide the session cookie's Secure attribute per request.
+
+    Flask's own SESSION_COOKIE_SECURE is a fixed boolean, which forces a choice
+    between leaving the cookie readable over plain HTTP and breaking LAN access
+    over http:// altogether. "auto" (the default) marks it Secure exactly when
+    the page was served over HTTPS, so both keep working.
+    """
+
+    def get_cookie_secure(self, app):
+        if SESSION_COOKIE_SECURE == "always":
+            return True
+        if SESSION_COOKIE_SECURE == "off":
+            return False
+        return has_request_context() and request_is_https()
+
+
+app.session_interface = _SessionInterface()
 
 
 @app.after_request
@@ -284,6 +321,11 @@ NOTIFY_ON_CHOICES = ("error", "all", "off")
 # sync gets old fast, so failures-only is the default.
 NOTIFY_MENTION_ON_CHOICES = ("error", "all")
 
+# When the session cookie carries the Secure attribute. See _SessionInterface.
+SESSION_COOKIE_SECURE_CHOICES = ("auto", "always", "off")
+_SESSION_COOKIE_SECURE_ALIASES = {"true": "always", "1": "always", "yes": "always", "on": "always",
+                                  "false": "off", "0": "off", "no": "off"}
+
 
 def load_config():
     """(Re)load all env/DB-backed configuration into module globals. Called
@@ -295,7 +337,7 @@ def load_config():
         ONBOARD_WIKI_URL, ONBOARD_REQUEST_URL, USE_RCLONE, RCLONE_RC_URL, \
         RCLONE_RC_USER, RCLONE_RC_PASS, RCLONE_MOUNT_ROOT, PLEX_IDENTIFIER, \
         PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING, \
-        NOTIFY_URLS, NOTIFY_ON, NOTIFY_MENTION, NOTIFY_MENTION_ON
+        NOTIFY_URLS, NOTIFY_ON, NOTIFY_MENTION, NOTIFY_MENTION_ON, SESSION_COOKIE_SECURE
 
     PLEX_URL        = _cfg_raw("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
     PLEX_TOKEN      = _cfg_raw("PLEX_TOKEN", "")
@@ -359,6 +401,14 @@ def load_config():
 
     # Apply secret key now that config is loaded
     app.secret_key = SECRET_KEY
+
+    # Plain true/false are accepted too, for anyone who knows Flask's own
+    # boolean setting of the same name.
+    raw_secure = _cfg_raw("SESSION_COOKIE_SECURE", "auto").strip().lower()
+    SESSION_COOKIE_SECURE = _SESSION_COOKIE_SECURE_ALIASES.get(raw_secure, raw_secure)
+    if SESSION_COOKIE_SECURE not in SESSION_COOKIE_SECURE_CHOICES:
+        log.warning("Unknown SESSION_COOKIE_SECURE value %r — falling back to 'auto'", raw_secure)
+        SESSION_COOKIE_SECURE = "auto"
 
     # `history` is constructed after the first load_config() call, so it only
     # exists on subsequent (Settings-page) reloads — keep its retention window
@@ -2997,6 +3047,8 @@ SETTINGS_SPEC = [
     ("MANUAL_USER", "MANUAL_USER", "Username", "text", "Manual UI Login", "admin"),
     ("MANUAL_PASS", "MANUAL_PASS", "Password", "password", "Manual UI Login", ""),
     ("SECRET_KEY", "SECRET_KEY", "Session Secret Key", "password", "Manual UI Login", ""),
+    ("SESSION_COOKIE_SECURE", "SESSION_COOKIE_SECURE", "Secure Session Cookie", "choice",
+     "Manual UI Login", ""),
 
     ("ONBOARD_WIKI_URL", "ONBOARD_WIKI_URL", "Wiki / Setup Guide URL", "url", "Onboarding Links", ""),
     ("ONBOARD_REQUEST_URL", "ONBOARD_REQUEST_URL", "Content Request URL", "url", "Onboarding Links", ""),
@@ -3011,6 +3063,11 @@ SETTINGS_SPEC = [
 
 # Allowed values for "choice" fields, keyed by env name.
 SETTINGS_CHOICES = {
+    "SESSION_COOKIE_SECURE": [
+        ("auto",   "Auto — when the page is served over HTTPS"),
+        ("always", "Always — HTTPS only"),
+        ("off",    "Never"),
+    ],
     "NOTIFY_MENTION_ON": [
         ("error", "Failures only"),
         ("all",   "Every notification"),
@@ -3049,6 +3106,13 @@ def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
         allowed = [v for v, _lbl in SETTINGS_CHOICES.get(env_name, [])]
         if raw and allowed and raw not in allowed:
             return "", f"{label} must be one of: {', '.join(allowed)}"
+        if env_name == "SESSION_COOKIE_SECURE" and raw == "always" and not request_is_https():
+            # A Secure cookie set over plain HTTP is discarded by the browser, so
+            # saving this from an http:// page would end the session on the spot
+            # and every later login would fail the same way.
+            return "", (f"{label}: you're connected over plain HTTP, so \"Always\" would log you "
+                        "out immediately and block every later login — open the page over "
+                        "HTTPS first, or use Auto")
         return raw, None
 
     if kind == "urls" and raw:
@@ -3622,4 +3686,13 @@ if __name__ == '__main__':
     invite_thread.start()
 
     log.info("Webhook receiver active on port %d", PORT)
-    serve(app, host='0.0.0.0', port=PORT, asyncore_use_poll=True)
+    # By default waitress deletes every X-Forwarded-* header it doesn't trust,
+    # which would leave SESSION_COOKIE_SECURE=auto blind behind a reverse
+    # proxy. Keep the headers but trust none of them: request_is_https() reads
+    # X-Forwarded-Proto for the cookie flag only. Do NOT switch to
+    # trusted_proxy="*" with x-forwarded-proto — that rewrites wsgi.url_scheme,
+    # flipping request.is_secure app-wide, which turns on Flask-WTF's strict
+    # Referer check and fails every POST (login included) behind proxies that
+    # rewrite Host, as nginx does by default.
+    serve(app, host='0.0.0.0', port=PORT, asyncore_use_poll=True,
+          clear_untrusted_proxy_headers=False)

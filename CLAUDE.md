@@ -25,6 +25,7 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `PLEX_URL` | yes | `http://127.0.0.1:32400` | Plex server address |
 | `PLEX_TOKEN` | yes | — | Plex auth token |
 | `SECRET_KEY` | yes | — | Session cookie signing key |
+| `SESSION_COOKIE_SECURE` | no | `auto` | Session cookie `Secure` flag: `auto` (when served over HTTPS), `always`, or `off` |
 | `SECTION_MAPPING` | yes | — | JSON: path prefix → Plex section ID |
 | `SONARR_URL` / `SONARR_API_KEY` | no | — | Enables quality profile lookups |
 | `RADARR_URL` / `RADARR_API_KEY` | no | — | Enables quality profile lookups |
@@ -62,6 +63,7 @@ templates/
 ## Key Internals
 
 - **Cache headers** — an `after_request` hook (`_no_store_by_default`) stamps `no-store, no-cache, must-revalidate, private` on any response that didn't set its own `Cache-Control`. Without it a caching reverse proxy stores authenticated pages and replays them after logout (and to anonymous visitors). Handlers that *want* caching — `/api/thumb`, `/api/maptile`, static files — set `Cache-Control` themselves and are skipped, so never remove those explicit headers assuming the default is harmless
+- **Session cookie `Secure` flag** — `_SessionInterface.get_cookie_secure()` decides it per request from `SESSION_COOKIE_SECURE`; `auto` uses `request_is_https()`, which also reads `X-Forwarded-Proto`. Waitress deletes untrusted `X-Forwarded-*` headers by default, so `serve()` passes `clear_untrusted_proxy_headers=False` — the headers arrive but nothing trusts them, and `wsgi.url_scheme` stays as the transport saw it. Never "fix" this with waitress `trusted_proxy`: that makes `request.is_secure` true app-wide, which enables Flask-WTF's strict Referer check (`WTF_CSRF_SSL_STRICT`) and fails every POST, login included, behind proxies that rewrite `Host` (nginx's default). `_validate_setting()` refuses `always` when the request itself isn't HTTPS, since saving it would end the admin's session on the spot
 - **`SyncTask`** — dataclass for a queued scan task
 - **`SyncHistory`** — SQLite3 history at `/data/history.db`; handles dedup and cooldown
 - **`SettingsStore`** — SQLite3 key/value store at `/data/settings.db`. `load_config()` resolves each config value as env var → DB setting → default, and is re-run after a Settings page save to hot-reload without a restart. Fields pinned by an env var are locked (read-only) in the Settings UI.

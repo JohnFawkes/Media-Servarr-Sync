@@ -116,12 +116,36 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `MANUAL_USER` | | `admin` | Username for the manual trigger UI |
 | `MANUAL_PASS` | | `changeme` | Password for the manual trigger UI |
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `SESSION_COOKIE_SECURE` | | `auto` | When the login cookie is marked `Secure` (HTTPS-only): `auto`, `always`, or `off`. See [Login cookie over HTTPS](#login-cookie-over-https) |
 | `NOTIFY_URLS` | | — | One or more notification targets (comma- or newline-separated). Any [Apprise](https://github.com/caronc/apprise/wiki) URL, or a plain webhook. See [Notifications](#notifications) |
 | `NOTIFY_ON` | | `error` | Which results to send: `error` (failures only), `all` (every sync), or `off` |
 | `NOTIFY_MENTION` | | — | Who to tag in the notification, e.g. `@everyone` or `user:123456789`. See [Tagging someone](#tagging-someone) |
 | `NOTIFY_MENTION_ON` | | `error` | When to attach the tag: `error` (failures only) or `all` |
 | `MEDIA_ROOT` | | `/mnt/media` | Host path to your media root, mounted into the container (only needed if `MINIMUM_AGE > 0`) |
 | `CONTAINER_MEDIA` | | `/mnt/media` | Path **inside this container** where `MEDIA_ROOT` is mounted — must match the path Plex uses to see your files |
+
+### Login cookie over HTTPS
+
+The login session lives in a cookie. Marking it `Secure` stops the browser ever
+sending it over plain HTTP, where anyone on the network path could read it.
+`SESSION_COOKIE_SECURE` controls that:
+
+| Value | Cookie is `Secure` | Use when |
+|---|---|---|
+| `auto` (default) | only when the page was served over HTTPS | almost always — HTTPS through a domain *and* plain `http://` on the LAN both keep working |
+| `always` | on every response | you only ever reach the UI over HTTPS |
+| `off` | never | the old behaviour |
+
+`auto` recognises HTTPS behind a reverse proxy from the `X-Forwarded-Proto`
+header that nginx, Caddy, Traefik and Nginx Proxy Manager set. If your proxy
+terminates TLS but doesn't send it, `auto` behaves like `off` — set `always`
+instead.
+
+The Settings page won't let you pick `always` while you're connected over plain
+HTTP, because a browser discards a `Secure` cookie on an `http://` page and you'd
+be logged out with no way back in. If you set it in `.env` and get locked out
+over HTTP, set `SESSION_COOKIE_SECURE=auto` and restart. `true` and `false` are
+accepted as aliases for `always` and `off`.
 
 ### Rclone settings
 
