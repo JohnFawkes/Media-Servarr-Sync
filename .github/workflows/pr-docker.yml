@@ -50,10 +50,12 @@ jobs:
 
       - name: Post pull instructions
         uses: actions/github-script@v9
+        env:
+          TAG: ${{ steps.branch.outputs.tag }}
         with:
           script: |
-            const tag = '${{ steps.branch.outputs.tag }}';
-            const image = `ghcr.io/${{ env.IMAGE_NAME }}:${tag}`;
+            const tag = process.env.TAG;
+            const image = `ghcr.io/${process.env.IMAGE_NAME}:${tag}`;
             const body = `### 🐳 PR Docker image ready\n\`\`\`\ndocker pull ${image}\ndocker run -d -p 5000:5000 \\\n  -e SECRET_KEY=changeme \\\n  -e PLEX_URL=http://your-plex:32400 \\\n  -e PLEX_TOKEN=your-token \\\n  -e SECTION_MAPPING='{"/": "1"}' \\\n  ${image}\n\`\`\``;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
