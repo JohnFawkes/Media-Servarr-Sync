@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Choose how Notifiarr is sent, and the emoji in front of the tag** — Apprise puts a fixed 👉 in front of every Notifiarr tag and also repeats the tag inside the message, with no option to change either. A new `NOTIFIARR_DELIVERY` setting keeps that as the default (`apprise`), or sends `notifiarr://` targets straight to Notifiarr's API (`direct`). Direct delivery uses `NOTIFIARR_MENTION_EMOJI` in front of the tag instead (any emoji or short text, or nothing), shows the tag only once, and labels the message `Media Servarr Sync` instead of `Apprise`. Both modes take the same URL and API key and ping the same way. Notifiarr targets now also work when Apprise isn't installed, where they used to be rejected as unsupported.
+
 ### Changed
 - Update dependency apprise to v2.3.0
 
@@ -15,8 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **Tags never pinged anyone through Notifiarr** — `NOTIFY_MENTION` treated a `notifiarr://` target as a service with no mention support, so `user:` and `role:` tags were dropped before the message was sent, and even a mention written as `<@id>` was stripped. Notifiarr posts to Discord through its own bot, and it only pings the user and role it finds written in Discord syntax, so the notification arrived but notified nobody. Notifiarr targets now get Discord syntax. Notifiarr pings at most one user and one role per message (the first of each you list); it has no ping for `@everyone` or `@here`, which appear in the message as text only. The Save & Send Test button was never the problem: a test always carries the tag.
-
----
 
 ## [v0.27.0] - 2026-11-22
 
