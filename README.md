@@ -37,6 +37,7 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Sign in with Plex** — log in via Plex.tv's PIN-based OAuth instead of a password; bootstraps `PLEX_TOKEN` automatically on first sign-in
 - **Settings page** — view and edit every configurable value from the web UI at `/settings`. Values already set via environment variables are shown locked (env always wins); everything else is editable and saved to `/data/settings.db`, taking effect immediately with no restart. Includes one-click Plex server discovery for the signed-in account
 - **Sync history** — paginated sync results (path, status, duration, errors) with server-side path search and status filter (All / OK / Failed)
+- **Retry failed syncs** — every failed entry, a single episode or a whole batch, has a **↻ Retry** button that scans the same folder again with the same episode, quality and profile details. A retry starts straight away, skipping `WEBHOOK_DELAY` and `SYNC_COOLDOWN`, and is marked `retry` in the history; the failed entry then shows `↻ retried`. With rclone enabled, failures recorded before this version can't be retried this way, because the original Sonarr/Radarr path wasn't saved; queue those from *Trigger path scan*
 - **Episode display** — for Sonarr events, the episode filename (e.g. `Show.S01E01.mkv`) is shown beneath the season folder path; batch imports show an episode-count badge that reveals all individual filenames on hover (filenames wrap fully, no truncation)
 - **Quality & profile tags** — each history entry displays colour-coded tags for the file quality (blue), quality profile (green, resolved via the Sonarr/Radarr API), and any custom formats (purple); hover a tag to see its label
 - **Filterable tags** — click any quality or profile tag to filter the history list to matching entries; active filters appear as dismissible pills in the filter bar and are preserved across search and pagination
@@ -397,6 +398,7 @@ SECTION_MAPPING={ "/mnt/media/tv": "1", "/mnt/media/movies": "2" }
 | `/health` | GET | None | JSON health check + recent history |
 | `/api/stats` | GET | None | Aggregate sync stats for dashboards |
 | `/api/server-stats` | GET | Session | Plex server CPU, RAM, and bandwidth stats |
+| `/api/history/<id>/retry` | POST | Session + CSRF | Queue a failed sync again (the Sync tab's ↻ Retry button) |
 
 ### Health response example
 
