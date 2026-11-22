@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [v0.27.0] - 2026-11-22
 
 ### Added
 - **Tag someone in notifications** — a new `NOTIFY_MENTION` setting adds a mention to the notification so a failed sync actually gets attention instead of sitting unread in a channel. Written in a portable shorthand (`@everyone`, `@here`, `user:<id>`, `role:<id>`, or plain text, space- or comma-separated) and rendered in each target's own syntax, so one setting works even when notifying Discord and Slack at once; markup already written for a service is passed through untouched. Raw ids are dropped for services with no mention support, so a bare `<@123>` never shows up as clutter in an ntfy push. On Discord the tag is also sent as the message's top-level content, because a mention that appears only inside an embed is displayed but notifies nobody. `NOTIFY_MENTION_ON` selects `error` (failures only, the default) or `all`; a **Save & Send Test** always includes the tag so it can be verified.
