@@ -13,6 +13,7 @@ on:
       - 'requirements.txt'
       - 'templates/**'
       - 'static/**'
+      - '.github/workflows/docker-publish.yml'
 
   workflow_dispatch:
 
@@ -26,6 +27,7 @@ on:
       - 'requirements.txt'
       - 'templates/**'
       - 'static/**'
+      - '.github/workflows/docker-publish.yml'
 
 env:
   # Use docker.io for Docker Hub if you prefer
@@ -216,8 +218,11 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # `latest` follows dev as well as releases, so the default image in
+          # compose.yaml picks up merged changes without waiting for a release.
+          # PR builds never get it: their ref is refs/pull/<n>/merge.
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' }}
             type=raw,value=${{ steps.promote.outputs.VERSION }},enable=${{ github.event_name == 'push' && steps.promote.outputs.VERSION != '' }}
             type=ref,event=branch
             type=ref,event=pr

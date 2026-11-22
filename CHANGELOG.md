@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **GitHub Actions pinned to commit SHAs** — every `uses:` referenced its action by a tag such as `@v7`, which the action's owner (or anyone who compromises their repository) can move to different code at any time; the workflows would then run it with their own permissions, including `packages` and `id-token` write. All 22 references across the six workflows are now pinned to the exact commit their tag pointed at, with the version kept as a comment (`@3d3c42e… # v7.0.1`), so what runs is unchanged. Renovate's `helpers:pinGitHubActionDigestsToSemver` preset keeps the digests and comments current and pins any new action added later.
 
 ### Changed
+- **`:latest` image now follows `dev`** — a merge to `dev` used to publish only `:dev` and `:sha-<commit>`, so anyone on the default `:latest` tag (as in `compose.yaml`) didn't get merged changes until the next release from `master`. Pushes to `dev` now tag `:latest` too. Releases still publish `:latest` and their version tag (`:v0.x.y`) as before; pin a version tag to stay on a release. Editing the build workflow now also triggers a build, so a change to it is exercised on its own PR instead of first running after merge.
 - Update dependency apprise to v2.2.0
 - Update sigstore/cosign-installer action to v4.1.3
 - Update dependency apprise to v2.1.0
