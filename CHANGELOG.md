@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Tag someone in notifications** — a new `NOTIFY_MENTION` setting adds a mention to the notification so a failed sync actually gets attention instead of sitting unread in a channel. Written in a portable shorthand (`@everyone`, `@here`, `user:<id>`, `role:<id>`, or plain text, space- or comma-separated) and rendered in each target's own syntax, so one setting works even when notifying Discord and Slack at once; markup already written for a service is passed through untouched. Raw ids are dropped for services with no mention support, so a bare `<@123>` never shows up as clutter in an ntfy push. On Discord the tag is also sent as the message's top-level content, because a mention that appears only inside an embed is displayed but notifies nobody. `NOTIFY_MENTION_ON` selects `error` (failures only, the default) or `all`; a **Save & Send Test** always includes the tag so it can be verified.
+
 ### Security
 - **Image scanners flagged vulnerable urllib3, msgpack and setuptools** — none of these come from the app's own dependencies. They are copies bundled inside `pip` itself, both the base image's system pip (urllib3 2.7.0, msgpack 1.1.2) and the venv's pip, and even the newest pip still bundles setuptools 70.3.0. pip is only needed while the image is being built, so it is now uninstalled from both the venv and the system Python once the requirements are in. This clears the 7 open Trivy alerts. The app's own urllib3 (pulled in by `requests`) is unaffected and at a fixed version.
 
