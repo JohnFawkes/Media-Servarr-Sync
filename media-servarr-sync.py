@@ -280,6 +280,10 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "ye
 # before the notification helpers further down are reached.
 NOTIFY_ON_CHOICES = ("error", "all", "off")
 
+# When a configured mention is attached. Pinging somebody for every successful
+# sync gets old fast, so failures-only is the default.
+NOTIFY_MENTION_ON_CHOICES = ("error", "all")
+
 
 def load_config():
     """(Re)load all env/DB-backed configuration into module globals. Called
@@ -291,7 +295,7 @@ def load_config():
         ONBOARD_WIKI_URL, ONBOARD_REQUEST_URL, USE_RCLONE, RCLONE_RC_URL, \
         RCLONE_RC_USER, RCLONE_RC_PASS, RCLONE_MOUNT_ROOT, PLEX_IDENTIFIER, \
         PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING, \
-        NOTIFY_URLS, NOTIFY_ON
+        NOTIFY_URLS, NOTIFY_ON, NOTIFY_MENTION, NOTIFY_MENTION_ON
 
     PLEX_URL        = _cfg_raw("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
     PLEX_TOKEN      = _cfg_raw("PLEX_TOKEN", "")
@@ -325,6 +329,14 @@ def load_config():
     if NOTIFY_ON not in NOTIFY_ON_CHOICES:
         log.warning("Unknown NOTIFY_ON value %r — falling back to 'error'", NOTIFY_ON)
         NOTIFY_ON = "error"
+
+    # Who to tag in the notification, e.g. "@everyone" or "user:123456789".
+    NOTIFY_MENTION    = _cfg_raw("NOTIFY_MENTION", "").strip()
+    NOTIFY_MENTION_ON = _cfg_raw("NOTIFY_MENTION_ON", "error").strip().lower()
+    if NOTIFY_MENTION_ON not in NOTIFY_MENTION_ON_CHOICES:
+        log.warning("Unknown NOTIFY_MENTION_ON value %r — falling back to 'error'",
+                    NOTIFY_MENTION_ON)
+        NOTIFY_MENTION_ON = "error"
 
     # Rclone — set USE_RCLONE=false to skip all rclone calls entirely
     USE_RCLONE        = _cfg_raw("USE_RCLONE", "false").strip().lower() in ("1", "true", "yes")
@@ -1050,14 +1062,20 @@ def _notification_payload(provider: str, entry: dict, title: str, body: str):
     failed = entry.get("status") == "error"
 
     if provider == "discord":
-        return {
+        payload = {
             "username": "Media Servarr Sync",
             "embeds": [{
                 "title": title,
                 "description": body,
                 "color": 0xF87171 if failed else 0x4ADE80,
             }],
-        }, None, None
+        }
+        # Discord does not notify anyone for a mention that appears only
+        # inside an embed, so lift it out into `content` as well.
+        mention = notify_mention_for(entry, "discord")
+        if mention:
+            payload["content"] = mention
+        return payload, None, None
 
     if provider == "slack":
         return {"text": f"*{title}*\n{body}"}, None, None
@@ -1091,8 +1109,115 @@ def _notification_payload(provider: str, entry: dict, title: str, body: str):
         "custom_formats":  formats,
         "duration_s":      entry.get("duration_s", 0),
         "error":           entry.get("error", ""),
+        "mention":         notify_mention_for(entry, "generic"),
         "ts":              entry.get("ts", now_local().isoformat()),
     }, None, None
+
+
+# Mention tokens already written in a service's own syntax are passed through
+# untouched: <@123> / <@&123> (Discord), <!here> / <!subteam^S1> (Slack).
+_MENTION_READY_RE = re.compile(r'^<[@!][&^]?[\w^]+>$')
+
+
+def parse_notify_mentions(raw: str) -> list:
+    """Parse NOTIFY_MENTION into (kind, value) pairs.
+
+    Accepts a comma- or space-separated list in a portable shorthand, so the
+    same setting can be rendered correctly for whichever services are
+    configured:
+
+        @everyone / @here      broadcast to the channel
+        user:<id>              a specific user
+        role:<id>              a role / user group
+        <@123>, <!here>        already service syntax — passed through as-is
+        @someone               any other text — passed through literally
+
+    kind is one of: everyone, here, user, role, ready, text.
+    """
+    out = []
+    for token in re.split(r'[,\s]+', (raw or '').strip()):
+        token = token.strip()
+        if not token:
+            continue
+        low = token.lower()
+        if low in ('@everyone', 'everyone'):
+            pair = ('everyone', '')
+        elif low in ('@here', 'here'):
+            pair = ('here', '')
+        elif low.startswith('user:'):
+            pair = ('user', token[5:].strip())
+        elif low.startswith('role:'):
+            pair = ('role', token[5:].strip())
+        elif _MENTION_READY_RE.match(token):
+            pair = ('ready', token)
+        else:
+            pair = ('text', token)
+        if pair[0] in ('user', 'role') and not pair[1]:
+            continue            # "user:" with nothing after it
+        if pair not in out:
+            out.append(pair)
+    return out
+
+
+def render_notify_mentions(mentions: list, provider: str) -> str:
+    """Render parsed mentions in `provider`'s own syntax.
+
+    Discord and Slack each have their own markup for users, roles and
+    channel-wide pings. Anywhere else an id is meaningless noise, so only the
+    readable forms survive — a bare `<@1234>` in an ntfy push would just be
+    clutter.
+    """
+    parts = []
+    for kind, value in mentions:
+        if kind == 'ready':
+            # Angle-bracket markup is Discord/Slack-specific by construction;
+            # elsewhere it would render as literal clutter.
+            rendered = value if provider in ('discord', 'slack') else ''
+        elif provider == 'discord':
+            rendered = {'everyone': '@everyone', 'here': '@here',
+                        'user': f'<@{value}>', 'role': f'<@&{value}>',
+                        'text': value}[kind]
+        elif provider == 'slack':
+            rendered = {'everyone': '<!everyone>', 'here': '<!here>',
+                        'user': f'<@{value}>', 'role': f'<!subteam^{value}>',
+                        'text': value}[kind]
+        else:
+            # No mention markup to speak of — keep what a human can read.
+            rendered = {'everyone': '@everyone', 'here': '@here',
+                        'text': value}.get(kind, '')
+        if rendered and rendered not in parts:
+            parts.append(rendered)
+    return ' '.join(parts)
+
+
+def notify_target_provider(url: str) -> str:
+    """Identify the service behind a target, by scheme or by host."""
+    scheme = url.split('://', 1)[0].lower() if '://' in url else ''
+    if scheme in ('http', 'https'):
+        return _notify_provider(url)
+    if scheme.startswith('discord'):
+        return 'discord'
+    if scheme.startswith('slack'):
+        return 'slack'
+    if scheme.startswith('gotify'):
+        return 'gotify'
+    if scheme.startswith('ntfy'):
+        return 'ntfy'
+    return 'generic'
+
+
+def notify_mention_for(entry: dict, provider: str) -> str:
+    """The mention text to attach to this notification, or "".
+
+    A test notification always carries it — otherwise, with the default
+    failures-only setting, there would be no way to check the tag works.
+    """
+    if not NOTIFY_MENTION:
+        return ""
+    if not entry.get("test") and NOTIFY_MENTION_ON == "error" \
+            and entry.get("status") != "error":
+        return ""
+    return render_notify_mentions(parse_notify_mentions(NOTIFY_MENTION), provider)
 
 
 def parse_notify_urls(raw: str) -> list:
@@ -1222,9 +1347,15 @@ def send_notification(entry: dict, urls: str = "") -> tuple:
     sent, failures = [], []
 
     for target in targets:
-        handled, ok, detail = _send_via_apprise(entry, target, title, body)
+        # Each service spells mentions differently, so render per target and
+        # put it on its own first line. On Discord this lands in the payload's
+        # top-level `content`, which is what actually triggers a ping.
+        mention = notify_mention_for(entry, notify_target_provider(target))
+        target_body = f"{mention}\n{body}" if mention else body
+
+        handled, ok, detail = _send_via_apprise(entry, target, title, target_body)
         if not handled:
-            ok, detail = _send_via_http(entry, target, title, body)
+            ok, detail = _send_via_http(entry, target, title, target_body)
         if ok:
             sent.append(redact_notify_url(target))
         else:
@@ -2873,10 +3004,17 @@ SETTINGS_SPEC = [
     ("NOTIFY_URLS", "NOTIFY_URLS", "Notification URLs", "urls", "Notifications",
      "discord://webhook_id/webhook_token\nntfy://ntfy.sh/my-topic\nhttps://my-host/hook"),
     ("NOTIFY_ON", "NOTIFY_ON", "Notify On", "choice", "Notifications", ""),
+    ("NOTIFY_MENTION", "NOTIFY_MENTION", "Mention / Tag", "mentions", "Notifications",
+     "@everyone  ·  user:123456789012345678  ·  role:987654321098765432"),
+    ("NOTIFY_MENTION_ON", "NOTIFY_MENTION_ON", "Mention On", "choice", "Notifications", ""),
 ]
 
 # Allowed values for "choice" fields, keyed by env name.
 SETTINGS_CHOICES = {
+    "NOTIFY_MENTION_ON": [
+        ("error", "Failures only"),
+        ("all",   "Every notification"),
+    ],
     "NOTIFY_ON": [
         ("error", "Failures only"),
         ("all",   "Every sync"),
@@ -2919,6 +3057,13 @@ def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
         if unsupported:
             return "", (f"{label}: unsupported or malformed target(s): "
                         + ", ".join(unsupported))
+        return raw, None
+
+    if kind == "mentions" and raw:
+        dangling = [t for t in re.split(r'[,\s]+', raw)
+                    if t.strip().lower() in ('user:', 'role:')]
+        if dangling:
+            return "", f"{label}: {', '.join(dangling)} needs an id after the colon"
         return raw, None
 
     if kind == "int" and raw:

@@ -30,7 +30,7 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Configurable delay** — wait N seconds after the webhook before scanning (gives Sonarr/Radarr time to finish writing)
 - **Minimum file age** — optionally hold off scanning until a file is at least N seconds old
 - **Retry on timeout** — Plex scan attempts retry up to 3 times with automatic reconnection on stale sessions
-- **Notifications** — send a summary of every sync (or just the failures) to one or more targets: Discord, Telegram, Slack, ntfy, Gotify, email, Matrix and 100+ more via [Apprise](https://github.com/caronc/apprise/wiki), or any webhook that accepts JSON. A **Save & Send Test** button on the Settings page confirms they work
+- **Notifications** — send a summary of every sync (or just the failures) to one or more targets, optionally tagging a user, role or the whole channel: Discord, Telegram, Slack, ntfy, Gotify, email, Matrix and 100+ more via [Apprise](https://github.com/caronc/apprise/wiki), or any webhook that accepts JSON. A **Save & Send Test** button on the Settings page confirms they work
 - **Health endpoint** — `/health` exposes queue depth, Plex connectivity, rclone mode, and recent sync history
 - **Stats API** — `/api/stats` returns aggregate sync counts, queue state, and last sync info — ready for [Homepage](https://gethomepage.dev) `customapi` widget
 - **Manual trigger UI** — password-protected web UI at `/` for ad-hoc scans
@@ -118,6 +118,8 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `NOTIFY_URLS` | | — | One or more notification targets (comma- or newline-separated). Any [Apprise](https://github.com/caronc/apprise/wiki) URL, or a plain webhook. See [Notifications](#notifications) |
 | `NOTIFY_ON` | | `error` | Which results to send: `error` (failures only), `all` (every sync), or `off` |
+| `NOTIFY_MENTION` | | — | Who to tag in the notification, e.g. `@everyone` or `user:123456789`. See [Tagging someone](#tagging-someone) |
+| `NOTIFY_MENTION_ON` | | `error` | When to attach the tag: `error` (failures only) or `all` |
 | `MEDIA_ROOT` | | `/mnt/media` | Host path to your media root, mounted into the container (only needed if `MINIMUM_AGE > 0`) |
 | `CONTAINER_MEDIA` | | `/mnt/media` | Path **inside this container** where `MEDIA_ROOT` is mounted — must match the path Plex uses to see your files |
 
@@ -173,6 +175,43 @@ are sent as normal-priority / green.
 | `error` (default) | Only syncs that failed |
 | `all` | Every completed sync |
 | `off` | Nothing |
+
+#### Tagging someone
+
+`NOTIFY_MENTION` adds a mention so a failure actually gets somebody's
+attention, instead of sitting unread in a channel:
+
+```env
+NOTIFY_MENTION=@everyone
+NOTIFY_MENTION=user:123456789012345678
+NOTIFY_MENTION=role:987654321098765432 @here
+```
+
+Separate several with spaces or commas. The shorthand is portable — each
+target gets it in its own service's syntax, so one setting works even when you
+notify Discord and Slack at once:
+
+| You write | Discord gets | Slack gets | Elsewhere |
+|---|---|---|---|
+| `@everyone` | `@everyone` | `<!everyone>` | `@everyone` |
+| `@here` | `@here` | `<!here>` | `@here` |
+| `user:<id>` | `<@id>` | `<@id>` | *omitted* |
+| `role:<id>` | `<@&id>` | `<!subteam^id>` | *omitted* |
+| `@someone` | `@someone` | `@someone` | `@someone` |
+
+Anything already written in a service's own markup (`<@123>`, `<!here>`,
+`<!subteam^S1>`) is passed through to Discord and Slack untouched. Raw ids are
+dropped for services that have no mention syntax — a bare `<@123>` in an ntfy
+push is just clutter — so only the readable forms appear there.
+
+On Discord the tag is placed where it actually triggers a notification: a
+mention that appears only inside an embed is rendered but pings nobody, so it
+is also sent as the message's top-level content.
+
+`NOTIFY_MENTION_ON` decides when the tag is attached — `error` (the default)
+tags only failures, `all` tags every notification. A **Save & Send Test**
+always includes it, so you can check the tag works. For Discord you can also
+use Apprise's own `?ping=` parameter on the URL if you prefer.
 
 Notifications are dispatched on a background thread, so a slow or unreachable
 target never delays a scan. Each target is delivered independently — one dead

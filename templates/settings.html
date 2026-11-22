@@ -253,6 +253,9 @@
           <button type="button" class="btn-outline btn-plex-token" id="grab-token-btn">Get Token via Plex Sign-In</button>
           <span id="grab-token-status" class="discover-status"></span>
           {% endif %}
+          {% if f.env_name == 'NOTIFY_MENTION' %}
+          <span class="hint-text">Who to tag. <code>@everyone</code>, <code>@here</code>, <code>user:&lt;id&gt;</code> or <code>role:&lt;id&gt;</code>, separated by spaces or commas — rendered in each service's own syntax. Already-formatted mentions (<code>&lt;@123&gt;</code>) are passed through untouched.</span>
+          {% endif %}
           {% if f.env_name == 'NOTIFY_URLS' %}
           <span class="hint-text">One target per line (or comma-separated). Any <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">Apprise</a> URL works — <code>discord://</code>, <code>tgram://</code>, <code>mailto://</code>, <code>ntfy://</code>, <code>gotify://</code> and 100+ more — as do raw Discord/Slack/ntfy webhook URLs. Any other <code>http(s)://</code> URL receives a plain JSON POST. Use <em>Save &amp; Send Test</em> below to check them.</span>
           {% endif %}
