@@ -1271,13 +1271,25 @@ def render_notify_mentions(mentions: list, provider: str) -> str:
     channel-wide pings. Anywhere else an id is meaningless noise, so only the
     readable forms survive — a bare `<@1234>` in an ntfy push would just be
     clutter.
+
+    Notifiarr relays to Discord through its own bot, and Apprise only pings
+    for it by finding Discord markup (`<@id>`, `<@&id>`) in the message body,
+    so it gets Discord syntax.
     """
+    if provider == 'notifiarr':
+        provider = 'discord'
+        relay = True             # Slack markup would be literal text there
+    else:
+        relay = False
     parts = []
     for kind, value in mentions:
         if kind == 'ready':
             # Angle-bracket markup is Discord/Slack-specific by construction;
             # elsewhere it would render as literal clutter.
-            rendered = value if provider in ('discord', 'slack') else ''
+            if relay:
+                rendered = value if value.startswith('<@') else ''
+            else:
+                rendered = value if provider in ('discord', 'slack') else ''
         elif provider == 'discord':
             rendered = {'everyone': '@everyone', 'here': '@here',
                         'user': f'<@{value}>', 'role': f'<@&{value}>',
@@ -1304,6 +1316,8 @@ def notify_target_provider(url: str) -> str:
         return 'discord'
     if scheme.startswith('slack'):
         return 'slack'
+    if scheme.startswith('notifiarr'):
+        return 'notifiarr'
     if scheme.startswith('gotify'):
         return 'gotify'
     if scheme.startswith('ntfy'):
