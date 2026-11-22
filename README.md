@@ -30,7 +30,7 @@ Sonarr / Radarr  →  media-servarr-sync  →  [rclone vfs/forget + vfs/refresh]
 - **Configurable delay** — wait N seconds after the webhook before scanning (gives Sonarr/Radarr time to finish writing)
 - **Minimum file age** — optionally hold off scanning until a file is at least N seconds old
 - **Retry on timeout** — Plex scan attempts retry up to 3 times with automatic reconnection on stale sessions
-- **Notifications** — send a summary of every sync (or just the failures) to one or more targets: Discord, Telegram, Slack, ntfy, Gotify, email, Matrix and 100+ more via [Apprise](https://github.com/caronc/apprise/wiki), or any webhook that accepts JSON. A **Save & Send Test** button on the Settings page confirms they work
+- **Notifications** — send a summary of every sync (or just the failures) to one or more targets, optionally tagging a user, role or the whole channel: Discord, Telegram, Slack, ntfy, Gotify, email, Matrix and 100+ more via [Apprise](https://github.com/caronc/apprise/wiki), or any webhook that accepts JSON. A **Save & Send Test** button on the Settings page confirms they work
 - **Health endpoint** — `/health` exposes queue depth, Plex connectivity, rclone mode, and recent sync history
 - **Stats API** — `/api/stats` returns aggregate sync counts, queue state, and last sync info — ready for [Homepage](https://gethomepage.dev) `customapi` widget
 - **Manual trigger UI** — password-protected web UI at `/` for ad-hoc scans
@@ -114,12 +114,38 @@ All configuration is done via environment variables (or a `.env` file in the pro
 | `RADARR_URL` | no | — | Radarr base URL, e.g. `http://radarr:7878`. Enables quality profile and custom format lookups for Radarr sync history entries |
 | `RADARR_API_KEY` | no | — | Radarr API key (Settings → General → Security). Required alongside `RADARR_URL` |
 | `MANUAL_USER` | | `admin` | Username for the manual trigger UI |
-| `MANUAL_PASS` | | `changeme` | Password for the manual trigger UI |
+| `MANUAL_PASS` | | `password` | Password for the manual trigger UI. Usually best left unset and chosen during first-run setup, where it's stored hashed. See [Admin password](#admin-password) |
 | `SECRET_KEY` | ✔️  | `random` | Secret used to sign session cookies. Generate with `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `SESSION_COOKIE_SECURE` | | `auto` | When the login cookie is marked `Secure` (HTTPS-only): `auto`, `always`, or `off`. See [Login cookie over HTTPS](#login-cookie-over-https) |
 | `NOTIFY_URLS` | | — | One or more notification targets (comma- or newline-separated). Any [Apprise](https://github.com/caronc/apprise/wiki) URL, or a plain webhook. See [Notifications](#notifications) |
 | `NOTIFY_ON` | | `error` | Which results to send: `error` (failures only), `all` (every sync), or `off` |
+| `NOTIFY_MENTION` | | — | Who to tag in the notification, e.g. `@everyone` or `user:123456789`. See [Tagging someone](#tagging-someone) |
+| `NOTIFY_MENTION_ON` | | `error` | When to attach the tag: `error` (failures only) or `all` |
 | `MEDIA_ROOT` | | `/mnt/media` | Host path to your media root, mounted into the container (only needed if `MINIMUM_AGE > 0`) |
 | `CONTAINER_MEDIA` | | `/mnt/media` | Path **inside this container** where `MEDIA_ROOT` is mounted — must match the path Plex uses to see your files |
+
+### Login cookie over HTTPS
+
+The login session lives in a cookie. Marking it `Secure` stops the browser ever
+sending it over plain HTTP, where anyone on the network path could read it.
+`SESSION_COOKIE_SECURE` controls that:
+
+| Value | Cookie is `Secure` | Use when |
+|---|---|---|
+| `auto` (default) | only when the page was served over HTTPS | almost always — HTTPS through a domain *and* plain `http://` on the LAN both keep working |
+| `always` | on every response | you only ever reach the UI over HTTPS |
+| `off` | never | the old behaviour |
+
+`auto` recognises HTTPS behind a reverse proxy from the `X-Forwarded-Proto`
+header that nginx, Caddy, Traefik and Nginx Proxy Manager set. If your proxy
+terminates TLS but doesn't send it, `auto` behaves like `off` — set `always`
+instead.
+
+The Settings page won't let you pick `always` while you're connected over plain
+HTTP, because a browser discards a `Secure` cookie on an `http://` page and you'd
+be logged out with no way back in. If you set it in `.env` and get locked out
+over HTTP, set `SESSION_COOKIE_SECURE=auto` and restart. `true` and `false` are
+accepted as aliases for `always` and `off`.
 
 ### Rclone settings
 
@@ -174,6 +200,43 @@ are sent as normal-priority / green.
 | `all` | Every completed sync |
 | `off` | Nothing |
 
+#### Tagging someone
+
+`NOTIFY_MENTION` adds a mention so a failure actually gets somebody's
+attention, instead of sitting unread in a channel:
+
+```env
+NOTIFY_MENTION=@everyone
+NOTIFY_MENTION=user:123456789012345678
+NOTIFY_MENTION=role:987654321098765432 @here
+```
+
+Separate several with spaces or commas. The shorthand is portable — each
+target gets it in its own service's syntax, so one setting works even when you
+notify Discord and Slack at once:
+
+| You write | Discord gets | Slack gets | Elsewhere |
+|---|---|---|---|
+| `@everyone` | `@everyone` | `<!everyone>` | `@everyone` |
+| `@here` | `@here` | `<!here>` | `@here` |
+| `user:<id>` | `<@id>` | `<@id>` | *omitted* |
+| `role:<id>` | `<@&id>` | `<!subteam^id>` | *omitted* |
+| `@someone` | `@someone` | `@someone` | `@someone` |
+
+Anything already written in a service's own markup (`<@123>`, `<!here>`,
+`<!subteam^S1>`) is passed through to Discord and Slack untouched. Raw ids are
+dropped for services that have no mention syntax — a bare `<@123>` in an ntfy
+push is just clutter — so only the readable forms appear there.
+
+On Discord the tag is placed where it actually triggers a notification: a
+mention that appears only inside an embed is rendered but pings nobody, so it
+is also sent as the message's top-level content.
+
+`NOTIFY_MENTION_ON` decides when the tag is attached — `error` (the default)
+tags only failures, `all` tags every notification. A **Save & Send Test**
+always includes it, so you can check the tag works. For Discord you can also
+use Apprise's own `?ping=` parameter on the URL if you prefer.
+
 Notifications are dispatched on a background thread, so a slow or unreachable
 target never delays a scan. Each target is delivered independently — one dead
 webhook doesn't stop the others — and any failures are logged with the target
@@ -211,6 +274,33 @@ Bare Gotify `/message?token=…` URLs are also handled directly. Apprise is an
 optional dependency: if it isn't installed, plain webhooks plus raw
 Discord/Slack/Gotify/ntfy URLs still work, and other schemes are reported as
 unsupported.
+
+### Admin password
+
+The web UI password can come from one of two places:
+
+- **First-run setup or the Settings page** — stored in `/data/settings.db` as a
+  salted scrypt hash, never as the password itself. The Settings field is always
+  shown empty: leave it empty to keep the current password, or type a new one to
+  replace it. A password saved by an earlier version, which kept it in plain
+  text, is converted to a hash automatically the first time this version starts.
+- **`MANUAL_PASS` in `.env`** — used exactly as written and never rewritten,
+  since it's your file. It overrides anything saved in the UI and locks the
+  Settings field. To keep the password itself out of `.env` as well, set
+  `MANUAL_PASS` to a hash instead:
+
+  ```bash
+  docker compose exec media-servarr-sync python -c "import getpass; from werkzeug.security import generate_password_hash as h; print(h(getpass.getpass()))"
+  ```
+
+  The hash contains `$` characters, which Docker Compose would otherwise read
+  as variables, so wrap it in **single quotes** in `.env`:
+  `MANUAL_PASS='scrypt:32768:8:1$…$…'`. If you set it under `environment:` in
+  `compose.yaml` instead, write every `$` as `$$`.
+
+**Rolling back:** a version older than this one can't read the hash, so after
+downgrading, the saved password is refused. Set `MANUAL_PASS` in `.env` and
+restart to get back in.
 
 ### Duration format
 

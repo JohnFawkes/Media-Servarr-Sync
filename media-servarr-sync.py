@@ -41,8 +41,11 @@ try:
 except ImportError:                       # pragma: no cover - optional dependency
     apprise = None
 
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response, send_file
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, make_response, send_file, \
+    has_request_context
+from flask.sessions import SecureCookieSessionInterface
 from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 from plexapi.server import PlexServer
 from plexapi.myplex import MyPlexAccount
@@ -97,6 +100,41 @@ logging.getLogger('apprise').setLevel(logging.CRITICAL)
 
 app = Flask(__name__)
 csrf = CSRFProtect(app)
+
+
+def request_is_https() -> bool:
+    """True when the browser reached us over HTTPS — directly, or through a
+    reverse proxy that says so in X-Forwarded-Proto.
+
+    The header is client-controllable when nothing sits in front of the app,
+    but the only thing it decides is the Secure flag on that same client's
+    own cookie, so a spoofed value can hurt nobody but the sender.
+    """
+    if request.is_secure:
+        return True
+    forwarded = request.headers.get("X-Forwarded-Proto", "")
+    # Proxies append; the leftmost entry is the hop the browser itself used.
+    return forwarded.split(",")[0].strip().lower() == "https"
+
+
+class _SessionInterface(SecureCookieSessionInterface):
+    """Decide the session cookie's Secure attribute per request.
+
+    Flask's own SESSION_COOKIE_SECURE is a fixed boolean, which forces a choice
+    between leaving the cookie readable over plain HTTP and breaking LAN access
+    over http:// altogether. "auto" (the default) marks it Secure exactly when
+    the page was served over HTTPS, so both keep working.
+    """
+
+    def get_cookie_secure(self, app):
+        if SESSION_COOKIE_SECURE == "always":
+            return True
+        if SESSION_COOKIE_SECURE == "off":
+            return False
+        return has_request_context() and request_is_https()
+
+
+app.session_interface = _SessionInterface()
 
 
 @app.after_request
@@ -280,6 +318,59 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").strip().lower() in ("1", "true", "ye
 # before the notification helpers further down are reached.
 NOTIFY_ON_CHOICES = ("error", "all", "off")
 
+# When a configured mention is attached. Pinging somebody for every successful
+# sync gets old fast, so failures-only is the default.
+NOTIFY_MENTION_ON_CHOICES = ("error", "all")
+
+# When the session cookie carries the Secure attribute. See _SessionInterface.
+SESSION_COOKIE_SECURE_CHOICES = ("auto", "always", "off")
+_SESSION_COOKIE_SECURE_ALIASES = {"true": "always", "1": "always", "yes": "always", "on": "always",
+                                  "false": "off", "0": "off", "no": "off"}
+
+
+# Werkzeug's own formats, e.g. "scrypt:32768:8:1$<salt>$<hex>". Matched strictly
+# so a plaintext password can't be mistaken for a hash.
+_PASSWORD_HASH_RE = re.compile(r'^(?:scrypt:\d+:\d+:\d+|pbkdf2:sha\d+:\d+)\$[^$]+\$[0-9a-f]+$')
+
+
+def is_password_hash(value) -> bool:
+    return bool(value) and bool(_PASSWORD_HASH_RE.match(value))
+
+
+def hash_admin_password(plain: str) -> str:
+    """Salted hash of the admin password, checked before it's handed back —
+    a stored hash that doesn't verify would lock the admin out."""
+    hashed = generate_password_hash(plain)
+    if not check_password_hash(hashed, plain):
+        raise RuntimeError("generated password hash did not verify")
+    return hashed
+
+
+def text_equal(a: str, b: str) -> bool:
+    """Constant-time string comparison that also accepts non-ASCII.
+
+    secrets.compare_digest raises TypeError on a str containing any non-ASCII
+    character, which turned logging in as 'josé' or with 'pässword' into an
+    HTTP 500. Comparing the UTF-8 bytes has no such limit."""
+    return _secrets.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def check_admin_password(candidate: str) -> bool:
+    """Verify a login attempt against MANUAL_PASS.
+
+    The stored value is normally a salted hash. A plaintext value is still
+    honoured, because MANUAL_PASS set in the environment is the operator's own
+    file and is never rewritten — and that path is also the way back in after
+    rolling back to a version that predates hashing."""
+    stored = MANUAL_PASS
+    if is_password_hash(stored):
+        try:
+            return check_password_hash(stored, candidate)
+        except Exception as exc:          # corrupt hash: refuse, never crash login
+            log.error("Stored admin password hash could not be checked: %s", exc)
+            return False
+    return text_equal(candidate, stored)
+
 
 def load_config():
     """(Re)load all env/DB-backed configuration into module globals. Called
@@ -291,7 +382,7 @@ def load_config():
         ONBOARD_WIKI_URL, ONBOARD_REQUEST_URL, USE_RCLONE, RCLONE_RC_URL, \
         RCLONE_RC_USER, RCLONE_RC_PASS, RCLONE_MOUNT_ROOT, PLEX_IDENTIFIER, \
         PATH_REPLACEMENTS, RCLONE_PATH_REPLACEMENTS, SECTION_MAPPING, \
-        NOTIFY_URLS, NOTIFY_ON
+        NOTIFY_URLS, NOTIFY_ON, NOTIFY_MENTION, NOTIFY_MENTION_ON, SESSION_COOKIE_SECURE
 
     PLEX_URL        = _cfg_raw("PLEX_URL", "http://127.0.0.1:32400").rstrip('/')
     PLEX_TOKEN      = _cfg_raw("PLEX_TOKEN", "")
@@ -301,6 +392,16 @@ def load_config():
     HISTORY_DAYS    = safe_int(_cfg_raw("HISTORY_DAYS", "7"), 7, minimum=1)
     SYNC_COOLDOWN   = parse_duration(_cfg_raw("SYNC_COOLDOWN", "5m"))
     MANUAL_USER     = _cfg_raw("MANUAL_USER", "admin")
+    # settings.db used to keep the admin password in plaintext. Hash it in
+    # place the first time it's seen. A password set in the environment is
+    # the operator's own file and is left exactly as it is.
+    stored_pass = settings_store.get("MANUAL_PASS")
+    if stored_pass and not is_password_hash(stored_pass):
+        try:
+            settings_store.set("MANUAL_PASS", hash_admin_password(stored_pass))
+            log.info("Admin password in settings.db converted to a salted hash")
+        except Exception as exc:
+            log.error("Could not hash the stored admin password, leaving it as is: %s", exc)
     MANUAL_PASS     = _cfg_raw("MANUAL_PASS", "password")
     # Used to sign session cookies — set a long random string in your .env or Settings
     SECRET_KEY      = _cfg_raw("SECRET_KEY", "") or _RANDOM_SECRET_KEY
@@ -326,6 +427,14 @@ def load_config():
         log.warning("Unknown NOTIFY_ON value %r — falling back to 'error'", NOTIFY_ON)
         NOTIFY_ON = "error"
 
+    # Who to tag in the notification, e.g. "@everyone" or "user:123456789".
+    NOTIFY_MENTION    = _cfg_raw("NOTIFY_MENTION", "").strip()
+    NOTIFY_MENTION_ON = _cfg_raw("NOTIFY_MENTION_ON", "error").strip().lower()
+    if NOTIFY_MENTION_ON not in NOTIFY_MENTION_ON_CHOICES:
+        log.warning("Unknown NOTIFY_MENTION_ON value %r — falling back to 'error'",
+                    NOTIFY_MENTION_ON)
+        NOTIFY_MENTION_ON = "error"
+
     # Rclone — set USE_RCLONE=false to skip all rclone calls entirely
     USE_RCLONE        = _cfg_raw("USE_RCLONE", "false").strip().lower() in ("1", "true", "yes")
     RCLONE_RC_URL     = _cfg_raw("RCLONE_RC_URL", "").rstrip('/')
@@ -347,6 +456,14 @@ def load_config():
 
     # Apply secret key now that config is loaded
     app.secret_key = SECRET_KEY
+
+    # Plain true/false are accepted too, for anyone who knows Flask's own
+    # boolean setting of the same name.
+    raw_secure = _cfg_raw("SESSION_COOKIE_SECURE", "auto").strip().lower()
+    SESSION_COOKIE_SECURE = _SESSION_COOKIE_SECURE_ALIASES.get(raw_secure, raw_secure)
+    if SESSION_COOKIE_SECURE not in SESSION_COOKIE_SECURE_CHOICES:
+        log.warning("Unknown SESSION_COOKIE_SECURE value %r — falling back to 'auto'", raw_secure)
+        SESSION_COOKIE_SECURE = "auto"
 
     # `history` is constructed after the first load_config() call, so it only
     # exists on subsequent (Settings-page) reloads — keep its retention window
@@ -1050,14 +1167,20 @@ def _notification_payload(provider: str, entry: dict, title: str, body: str):
     failed = entry.get("status") == "error"
 
     if provider == "discord":
-        return {
+        payload = {
             "username": "Media Servarr Sync",
             "embeds": [{
                 "title": title,
                 "description": body,
                 "color": 0xF87171 if failed else 0x4ADE80,
             }],
-        }, None, None
+        }
+        # Discord does not notify anyone for a mention that appears only
+        # inside an embed, so lift it out into `content` as well.
+        mention = notify_mention_for(entry, "discord")
+        if mention:
+            payload["content"] = mention
+        return payload, None, None
 
     if provider == "slack":
         return {"text": f"*{title}*\n{body}"}, None, None
@@ -1091,8 +1214,115 @@ def _notification_payload(provider: str, entry: dict, title: str, body: str):
         "custom_formats":  formats,
         "duration_s":      entry.get("duration_s", 0),
         "error":           entry.get("error", ""),
+        "mention":         notify_mention_for(entry, "generic"),
         "ts":              entry.get("ts", now_local().isoformat()),
     }, None, None
+
+
+# Mention tokens already written in a service's own syntax are passed through
+# untouched: <@123> / <@&123> (Discord), <!here> / <!subteam^S1> (Slack).
+_MENTION_READY_RE = re.compile(r'^<[@!][&^]?[\w^]+>$')
+
+
+def parse_notify_mentions(raw: str) -> list:
+    """Parse NOTIFY_MENTION into (kind, value) pairs.
+
+    Accepts a comma- or space-separated list in a portable shorthand, so the
+    same setting can be rendered correctly for whichever services are
+    configured:
+
+        @everyone / @here      broadcast to the channel
+        user:<id>              a specific user
+        role:<id>              a role / user group
+        <@123>, <!here>        already service syntax — passed through as-is
+        @someone               any other text — passed through literally
+
+    kind is one of: everyone, here, user, role, ready, text.
+    """
+    out = []
+    for token in re.split(r'[,\s]+', (raw or '').strip()):
+        token = token.strip()
+        if not token:
+            continue
+        low = token.lower()
+        if low in ('@everyone', 'everyone'):
+            pair = ('everyone', '')
+        elif low in ('@here', 'here'):
+            pair = ('here', '')
+        elif low.startswith('user:'):
+            pair = ('user', token[5:].strip())
+        elif low.startswith('role:'):
+            pair = ('role', token[5:].strip())
+        elif _MENTION_READY_RE.match(token):
+            pair = ('ready', token)
+        else:
+            pair = ('text', token)
+        if pair[0] in ('user', 'role') and not pair[1]:
+            continue            # "user:" with nothing after it
+        if pair not in out:
+            out.append(pair)
+    return out
+
+
+def render_notify_mentions(mentions: list, provider: str) -> str:
+    """Render parsed mentions in `provider`'s own syntax.
+
+    Discord and Slack each have their own markup for users, roles and
+    channel-wide pings. Anywhere else an id is meaningless noise, so only the
+    readable forms survive — a bare `<@1234>` in an ntfy push would just be
+    clutter.
+    """
+    parts = []
+    for kind, value in mentions:
+        if kind == 'ready':
+            # Angle-bracket markup is Discord/Slack-specific by construction;
+            # elsewhere it would render as literal clutter.
+            rendered = value if provider in ('discord', 'slack') else ''
+        elif provider == 'discord':
+            rendered = {'everyone': '@everyone', 'here': '@here',
+                        'user': f'<@{value}>', 'role': f'<@&{value}>',
+                        'text': value}[kind]
+        elif provider == 'slack':
+            rendered = {'everyone': '<!everyone>', 'here': '<!here>',
+                        'user': f'<@{value}>', 'role': f'<!subteam^{value}>',
+                        'text': value}[kind]
+        else:
+            # No mention markup to speak of — keep what a human can read.
+            rendered = {'everyone': '@everyone', 'here': '@here',
+                        'text': value}.get(kind, '')
+        if rendered and rendered not in parts:
+            parts.append(rendered)
+    return ' '.join(parts)
+
+
+def notify_target_provider(url: str) -> str:
+    """Identify the service behind a target, by scheme or by host."""
+    scheme = url.split('://', 1)[0].lower() if '://' in url else ''
+    if scheme in ('http', 'https'):
+        return _notify_provider(url)
+    if scheme.startswith('discord'):
+        return 'discord'
+    if scheme.startswith('slack'):
+        return 'slack'
+    if scheme.startswith('gotify'):
+        return 'gotify'
+    if scheme.startswith('ntfy'):
+        return 'ntfy'
+    return 'generic'
+
+
+def notify_mention_for(entry: dict, provider: str) -> str:
+    """The mention text to attach to this notification, or "".
+
+    A test notification always carries it — otherwise, with the default
+    failures-only setting, there would be no way to check the tag works.
+    """
+    if not NOTIFY_MENTION:
+        return ""
+    if not entry.get("test") and NOTIFY_MENTION_ON == "error" \
+            and entry.get("status") != "error":
+        return ""
+    return render_notify_mentions(parse_notify_mentions(NOTIFY_MENTION), provider)
 
 
 def parse_notify_urls(raw: str) -> list:
@@ -1222,9 +1452,15 @@ def send_notification(entry: dict, urls: str = "") -> tuple:
     sent, failures = [], []
 
     for target in targets:
-        handled, ok, detail = _send_via_apprise(entry, target, title, body)
+        # Each service spells mentions differently, so render per target and
+        # put it on its own first line. On Discord this lands in the payload's
+        # top-level `content`, which is what actually triggers a ping.
+        mention = notify_mention_for(entry, notify_target_provider(target))
+        target_body = f"{mention}\n{body}" if mention else body
+
+        handled, ok, detail = _send_via_apprise(entry, target, title, target_body)
         if not handled:
-            ok, detail = _send_via_http(entry, target, title, body)
+            ok, detail = _send_via_http(entry, target, title, target_body)
         if ok:
             sent.append(redact_notify_url(target))
         else:
@@ -2121,9 +2357,9 @@ def onboarding():
     if request.method == 'POST':
         step = request.form.get('step', '')
         if step == 'password':
-            new_pass = request.form.get('new_password', '').strip()
-            if not _cfg_is_env('MANUAL_PASS') and new_pass:
-                settings_store.set('MANUAL_PASS', new_pass)
+            new_pass = request.form.get('new_password', '')
+            if not _cfg_is_env('MANUAL_PASS') and new_pass.strip():
+                settings_store.set('MANUAL_PASS', hash_admin_password(new_pass))
                 load_config()
             return redirect(url_for('onboarding'))
         elif step == 'plex_manual':
@@ -2144,7 +2380,7 @@ def onboarding():
     return render_template(
         'onboarding.html', message=message, msg_class=msg_class,
         manual_pass_locked=_cfg_is_env('MANUAL_PASS'),
-        using_default_pass=(MANUAL_PASS == "password"),
+        using_default_pass=check_admin_password("password"),
     )
 
 
@@ -2158,8 +2394,8 @@ def login():
         password = request.form.get('password', '')
         # Constant-time comparison so response timing can't be used to probe
         # the configured username/password character by character.
-        user_ok = _secrets.compare_digest(username, MANUAL_USER)
-        pass_ok = _secrets.compare_digest(password, MANUAL_PASS)
+        user_ok = text_equal(username, MANUAL_USER)
+        pass_ok = check_admin_password(password)
         if user_ok and pass_ok:
             session.permanent = bool(request.form.get('remember_me'))
             session['authenticated'] = True
@@ -2864,8 +3100,11 @@ SETTINGS_SPEC = [
      '{ "/mnt/media/tv": "1" }'),
 
     ("MANUAL_USER", "MANUAL_USER", "Username", "text", "Manual UI Login", "admin"),
-    ("MANUAL_PASS", "MANUAL_PASS", "Password", "password", "Manual UI Login", ""),
+    ("MANUAL_PASS", "MANUAL_PASS", "Password", "admin_password", "Manual UI Login",
+     "Leave blank to keep the current password"),
     ("SECRET_KEY", "SECRET_KEY", "Session Secret Key", "password", "Manual UI Login", ""),
+    ("SESSION_COOKIE_SECURE", "SESSION_COOKIE_SECURE", "Secure Session Cookie", "choice",
+     "Manual UI Login", ""),
 
     ("ONBOARD_WIKI_URL", "ONBOARD_WIKI_URL", "Wiki / Setup Guide URL", "url", "Onboarding Links", ""),
     ("ONBOARD_REQUEST_URL", "ONBOARD_REQUEST_URL", "Content Request URL", "url", "Onboarding Links", ""),
@@ -2873,10 +3112,22 @@ SETTINGS_SPEC = [
     ("NOTIFY_URLS", "NOTIFY_URLS", "Notification URLs", "urls", "Notifications",
      "discord://webhook_id/webhook_token\nntfy://ntfy.sh/my-topic\nhttps://my-host/hook"),
     ("NOTIFY_ON", "NOTIFY_ON", "Notify On", "choice", "Notifications", ""),
+    ("NOTIFY_MENTION", "NOTIFY_MENTION", "Mention / Tag", "mentions", "Notifications",
+     "@everyone  ·  user:123456789012345678  ·  role:987654321098765432"),
+    ("NOTIFY_MENTION_ON", "NOTIFY_MENTION_ON", "Mention On", "choice", "Notifications", ""),
 ]
 
 # Allowed values for "choice" fields, keyed by env name.
 SETTINGS_CHOICES = {
+    "SESSION_COOKIE_SECURE": [
+        ("auto",   "Auto — when the page is served over HTTPS"),
+        ("always", "Always — HTTPS only"),
+        ("off",    "Never"),
+    ],
+    "NOTIFY_MENTION_ON": [
+        ("error", "Failures only"),
+        ("all",   "Every notification"),
+    ],
     "NOTIFY_ON": [
         ("error", "Failures only"),
         ("all",   "Every sync"),
@@ -2895,6 +3146,15 @@ def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
     if kind == "bool":
         return ("true" if raw else "false"), None
 
+    if kind == "admin_password":
+        # Blank keeps the current password. The field is never pre-filled, so
+        # without this every save would replace the password with "".
+        # Not stripped: login compares exactly what was typed, so trimming
+        # here would store a password the admin can't type.
+        if not (raw or "").strip():
+            return None, None
+        return hash_admin_password(raw), None
+
     raw = (raw or "").strip()
 
     if kind == "json":
@@ -2911,6 +3171,13 @@ def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
         allowed = [v for v, _lbl in SETTINGS_CHOICES.get(env_name, [])]
         if raw and allowed and raw not in allowed:
             return "", f"{label} must be one of: {', '.join(allowed)}"
+        if env_name == "SESSION_COOKIE_SECURE" and raw == "always" and not request_is_https():
+            # A Secure cookie set over plain HTTP is discarded by the browser, so
+            # saving this from an http:// page would end the session on the spot
+            # and every later login would fail the same way.
+            return "", (f"{label}: you're connected over plain HTTP, so \"Always\" would log you "
+                        "out immediately and block every later login — open the page over "
+                        "HTTPS first, or use Auto")
         return raw, None
 
     if kind == "urls" and raw:
@@ -2919,6 +3186,13 @@ def _validate_setting(env_name: str, kind: str, label: str, raw: str) -> tuple:
         if unsupported:
             return "", (f"{label}: unsupported or malformed target(s): "
                         + ", ".join(unsupported))
+        return raw, None
+
+    if kind == "mentions" and raw:
+        dangling = [t for t in re.split(r'[,\s]+', raw)
+                    if t.strip().lower() in ('user:', 'role:')]
+        if dangling:
+            return "", f"{label}: {', '.join(dangling)} needs an id after the colon"
         return raw, None
 
     if kind == "int" and raw:
@@ -2941,6 +3215,8 @@ def _settings_view_model() -> list:
     groups = {}
     for env_name, global_name, label, kind, group, placeholder in SETTINGS_SPEC:
         value = globals().get(global_name, "")
+        if kind == "admin_password":
+            value = ""        # never send the password, or its hash, to the browser
         if kind == "json" and isinstance(value, dict):
             value = json.dumps(value, indent=2)
         groups.setdefault(group, []).append({
@@ -2975,7 +3251,7 @@ def settings_page():
                                            request.form.get(env_name, ""))
             if err:
                 errors.append(err)
-            else:
+            elif value is not None:          # None: leave this setting untouched
                 pending[env_name] = value
 
         if errors:
@@ -3477,4 +3753,13 @@ if __name__ == '__main__':
     invite_thread.start()
 
     log.info("Webhook receiver active on port %d", PORT)
-    serve(app, host='0.0.0.0', port=PORT, asyncore_use_poll=True)
+    # By default waitress deletes every X-Forwarded-* header it doesn't trust,
+    # which would leave SESSION_COOKIE_SECURE=auto blind behind a reverse
+    # proxy. Keep the headers but trust none of them: request_is_https() reads
+    # X-Forwarded-Proto for the cookie flag only. Do NOT switch to
+    # trusted_proxy="*" with x-forwarded-proto — that rewrites wsgi.url_scheme,
+    # flipping request.is_secure app-wide, which turns on Flask-WTF's strict
+    # Referer check and fails every POST (login included) behind proxies that
+    # rewrite Host, as nginx does by default.
+    serve(app, host='0.0.0.0', port=PORT, asyncore_use_poll=True,
+          clear_untrusted_proxy_headers=False)

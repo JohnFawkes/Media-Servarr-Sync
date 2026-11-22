@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Tag someone in notifications** — a new `NOTIFY_MENTION` setting adds a mention to the notification so a failed sync actually gets attention instead of sitting unread in a channel. Written in a portable shorthand (`@everyone`, `@here`, `user:<id>`, `role:<id>`, or plain text, space- or comma-separated) and rendered in each target's own syntax, so one setting works even when notifying Discord and Slack at once; markup already written for a service is passed through untouched. Raw ids are dropped for services with no mention support, so a bare `<@123>` never shows up as clutter in an ntfy push. On Discord the tag is also sent as the message's top-level content, because a mention that appears only inside an embed is displayed but notifies nobody. `NOTIFY_MENTION_ON` selects `error` (failures only, the default) or `all`; a **Save & Send Test** always includes the tag so it can be verified.
+
+### Fixed
+- **Non-ASCII username or password crashed the login page** — the constant-time comparison added in v0.25.0 used `secrets.compare_digest` on text, which raises `TypeError` for any character outside ASCII, so submitting `josé` or `pässwörd` returned HTTP 500 instead of logging in or being refused. Credentials are now compared as UTF-8 bytes.
+
+### Security
+- **Login cookie is now `Secure` over HTTPS** — the session cookie never carried the `Secure` attribute, so a browser would send it over plain HTTP too, where anyone on the path could read it and take over the admin session. A new `SESSION_COOKIE_SECURE` setting decides it per request: `auto` (the default) marks it `Secure` exactly when the page was served over HTTPS — directly or as reported by a reverse proxy's `X-Forwarded-Proto` — so an HTTPS domain is protected with no configuration while plain `http://` on the LAN keeps working; `always` and `off` are also available. Waitress was silently deleting `X-Forwarded-Proto` before the app saw it, so it now passes proxy headers through without trusting any of them. It deliberately does not let waitress rewrite the request scheme: that turns on Flask-WTF's strict Referer check, which would fail every login behind a proxy that rewrites `Host` (as nginx does by default). The Settings page refuses `always` while you're on plain HTTP, since the browser would discard the cookie and lock you out.
+- **Remaining workflow expressions moved out of shell and script bodies** — follow-up to the branch-name fix in #196, which closed the two `github.head_ref` sites but left the same pattern elsewhere. Every `${{ }}` context expression that was still interpolated directly into a `run:` or `github-script` body now arrives through step-level `env:` and is referenced as a quoted variable, so nothing in the workflows is parsed as code any more. Only one site was a genuine injection path: the screenshot step's `git push origin HEAD:${{ github.head_ref || github.ref_name }}`, unquoted and PR-controllable, in a job holding `contents`, `packages` and `id-token` write — currently disabled with `if: false`, but one edit from live. The others were not exploitable given where their values come from (an integer-built version string, a charset-restricted tag, a workflow constant, Docker metadata output), and were converted so the rule is uniform and checkable rather than resting on per-site provenance arguments. `git checkout ${{ github.ref_name }}` was also fully unquoted, so a ref containing a space would have been split into two arguments. zizmor reports 6 template-injection findings before and none after; behaviour on real values is unchanged.
+- **Admin password is no longer stored in plain text** — a password set during first-run setup or on the Settings page was written to `/data/settings.db` as-is, and the Settings page sent it back to the browser in the page source, so anyone with a copy of the volume, a backup of it, or a glance at view-source had it. It's now stored as a salted scrypt hash, and an existing plaintext password is converted automatically on first start; nothing needs to be re-entered. The Settings field is never pre-filled, and leaving it empty keeps the current password. A password with leading or trailing spaces is now kept exactly as typed, where Settings used to trim it into one that could never be entered at login. `MANUAL_PASS` set in `.env` is used as written and never rewritten; it can now also hold a hash, generated with the command in the README. `.env.example` no longer pins `MANUAL_PASS=changeme`, which locked every new install to a publicly known password the UI couldn't change. **Rolling back to an older version:** it can't read the hash, so the saved password will be refused — set `MANUAL_PASS` in `.env` and restart to get back in.
+- **Image scanners flagged vulnerable urllib3, msgpack and setuptools** — none of these come from the app's own dependencies. They are copies bundled inside `pip` itself, both the base image's system pip (urllib3 2.7.0, msgpack 1.1.2) and the venv's pip, and even the newest pip still bundles setuptools 70.3.0. pip is only needed while the image is being built, so it is now uninstalled from both the venv and the system Python once the requirements are in. This clears the 7 open Trivy alerts. The app's own urllib3 (pulled in by `requests`) is unaffected and at a fixed version.
+- **GitHub Actions pinned to commit SHAs** — every `uses:` referenced its action by a tag such as `@v7`, which the action's owner (or anyone who compromises their repository) can move to different code at any time; the workflows would then run it with their own permissions, including `packages` and `id-token` write. All 22 references across the six workflows are now pinned to the exact commit their tag pointed at, with the version kept as a comment (`@3d3c42e… # v7.0.1`), so what runs is unchanged. Renovate's `helpers:pinGitHubActionDigestsToSemver` preset keeps the digests and comments current and pins any new action added later.
+
+### Changed
+- Update dependency apprise to v2.2.0
+- Update sigstore/cosign-installer action to v4.1.3
+- Update dependency apprise to v2.1.0
+- Update python docker tag to v3.15
+- Update dependency apprise to v2
+- Update dependency python-dotenv to v1.2.4
+- Update dependency plexapi to v4.18.3
+
+---
+
 ## [v0.26.0] - 2026-09-10
 
 ### Security

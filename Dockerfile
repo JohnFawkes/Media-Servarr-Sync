@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14-slim AS base
+FROM python:3.15-slim AS base
 
 # ── System deps ──────────────────────────────────────────────────────────────
 # upgrade picks up security patches for packages already in the base image
@@ -18,9 +18,15 @@ WORKDIR /app
 
 # ── Python deps (cached layer) ────────────────────────────────────────────────
 COPY requirements.txt .
+# pip is only needed at build time. It vendors its own urllib3, msgpack and
+# setuptools (pkg_resources), which image scanners flag even though the app
+# never imports them, and even the latest pip ships a vulnerable setuptools.
+# So remove pip from the venv and from the base image's system Python once
+# the deps are installed.
 RUN python -m venv /app/.venv \
-    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip>=26.0 \
-    && /app/.venv/bin/pip install --no-cache-dir -r requirements.txt
+    && /app/.venv/bin/pip install --no-cache-dir -r requirements.txt \
+    && /app/.venv/bin/pip uninstall -y pip \
+    && python -m pip uninstall -y --root-user-action=ignore pip
 
 ENV PATH="/app/.venv/bin:$PATH"
 
